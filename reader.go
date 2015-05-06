@@ -167,18 +167,18 @@ func (f *packedFileReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// Reader provides sequential access to files in a RAR archive.
-type Reader struct {
-	r     io.Reader        // reader for current unpacked file
-	pr    packedFileReader // reader for current packed file
-	dr    decodeReader     // reader for decoding and filters if file is compressed
-	cksum fileChecksum     // current file checksum
-	solid bool             // file is solid
+// RarChild provides sequential access to files in a RAR archive.
+type RarChild struct {
+	Reader io.Reader        // reader for current unpacked file
+	pr     packedFileReader // reader for current packed file
+	dr     decodeReader     // reader for decoding and filters if file is compressed
+	cksum  fileChecksum     // current file checksum
+	solid  bool             // file is solid
 }
 
 // Read reads from the current file in the RAR archive.
-func (r *Reader) Read(p []byte) (int, error) {
-	n, err := r.r.Read(p)
+func (r *RarChild) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
 	if err == io.EOF && r.cksum != nil && !r.cksum.valid() {
 		return n, errBadFileChecksum
 	}
@@ -186,10 +186,10 @@ func (r *Reader) Read(p []byte) (int, error) {
 }
 
 // Next advances to the next file in the archive.
-func (r *Reader) Next() (*FileHeader, error) {
+func (r *RarChild) Next() (*FileHeader, error) {
 	if r.solid {
 		// solid files must be read fully to update decode tables and window
-		if _, err := io.Copy(ioutil.Discard, r.r); err != nil {
+		if _, err := io.Copy(ioutil.Discard, r.Reader); err != nil {
 			return nil, err
 		}
 	}
@@ -200,47 +200,47 @@ func (r *Reader) Next() (*FileHeader, error) {
 	}
 	r.solid = h.solid
 
-	r.r = io.Reader(&r.pr) // start with packed file reader
+	r.Reader = io.Reader(&r.pr) // start with packed file reader
 
 	// check for encryption
 	if len(h.key) > 0 && len(h.iv) > 0 {
-		r.r = newAesDecryptReader(r.r, h.key, h.iv) // decrypt
+		r.Reader = newAesDecryptReader(r.Reader, h.key, h.iv) // decrypt
 	}
 	// check for compression
 	if h.decoder != nil {
-		err = r.dr.init(r.r, h.decoder, h.winSize, !h.solid)
+		err = r.dr.init(r.Reader, h.decoder, h.winSize, !h.solid)
 		if err != nil {
 			return nil, err
 		}
-		r.r = &r.dr
+		r.Reader = &r.dr
 	}
 	if h.UnPackedSize >= 0 && !h.UnKnownSize {
 		// Limit reading to UnPackedSize as there may be padding
-		r.r = limitReader(r.r, h.UnPackedSize, errShortFile)
+		r.Reader = limitReader(r.Reader, h.UnPackedSize, errShortFile)
 	}
 	r.cksum = h.cksum
 	if r.cksum != nil {
-		r.r = io.TeeReader(r.r, h.cksum) // write file data to checksum as it is read
+		r.Reader = io.TeeReader(r.Reader, h.cksum) // write file data to checksum as it is read
 	}
 	fh := new(FileHeader)
 	*fh = h.FileHeader
 	return fh, nil
 }
 
-func newReader(v *volume, password string) (*Reader, error) {
+func newReader(v *volume, password string) (*RarChild, error) {
 	runes := []rune(password)
 	if len(runes) > maxPassword {
 		password = string(runes[:maxPassword])
 	}
 	var err error
-	r := new(Reader)
-	r.r = bytes.NewReader(nil) // initial reads will always return EOF
+	r := new(RarChild)
+	r.Reader = bytes.NewReader(nil) // initial reads will always return EOF
 	r.pr.r, err = newFileBlockReader(v, password)
 	return r, err
 }
 
 // NewReader creates a Reader reading from r.
-func NewReader(r io.Reader, password string) (*Reader, error) {
+func NewReader(r io.Reader, password string) (*RarChild, error) {
 	v, err := newVolume(r)
 	if err != nil {
 		return nil, err
@@ -249,7 +249,7 @@ func NewReader(r io.Reader, password string) (*Reader, error) {
 }
 
 // OpenReader opens a RAR archive specified by the name and returns a Reader.
-func OpenReader(name, password string) (*Reader, error) {
+func OpenReader(name, password string) (*RarChild, error) {
 	v, err := openVolume(name)
 	if err != nil {
 		return nil, err
