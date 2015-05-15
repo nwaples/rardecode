@@ -352,19 +352,25 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 	return f, nil
 }
 
+// readBlockHeader returns the next block header in the archive.
+// It will return io.EOF if there were no bytes read.
 func (a *archive15) readBlockHeader() (*blockHeader15, error) {
+	var err error
+	b := a.buf[:7]
 	r := io.Reader(a.v)
 	if a.encrypted {
 		salt := a.buf[:saltSize]
-		if err := readFull(r, salt); err != nil {
+		_, err = io.ReadFull(r, salt)
+		if err != nil {
 			return nil, err
 		}
 		key, iv := a.getKeys(salt)
 		r = newAesDecryptReader(r, key, iv)
+		err = readFull(r, b)
+	} else {
+		_, err = io.ReadFull(r, b)
 	}
-
-	b := a.buf[:7]
-	if err := readFull(r, b); err != nil {
+	if err != nil {
 		return nil, err
 	}
 
@@ -415,11 +421,7 @@ func (a *archive15) next() (*fileBlockHeader, error) {
 		}
 	}
 	for {
-		// Check for EOF.
-		// 1.5 archive file format may not necessarily end in an End block.
-		if _, err := a.v.Peek(1); err != nil {
-			return nil, err
-		}
+		// could return an io.EOF here as 1.5 archives may not have an end block.
 		h, err := a.readBlockHeader()
 		if err != nil {
 			return nil, err
