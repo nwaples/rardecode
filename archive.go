@@ -214,6 +214,10 @@ func (v *volume) next() (*fileBlockHeader, error) {
 }
 
 func (v *volume) Close() error {
+	// may be nil if os.Open fails in next()
+	if v.f == nil {
+		return nil
+	}
 	return v.f.Close()
 }
 
