@@ -101,6 +101,8 @@ type fileBlockHeader struct {
 type fileBlockReader interface {
 	io.Reader                        // Read's read data from the current file block
 	next() (*fileBlockHeader, error) // advances to the next file block
+	reset(r io.Reader)               // resets for new volume file
+	version() int                    // returns current archive format version
 }
 
 // packedFileReader provides sequential access to packed files in a RAR archive.
@@ -227,32 +229,27 @@ func (r *Reader) Next() (*FileHeader, error) {
 	return fh, nil
 }
 
-func newReader(v *volume, password string) (*Reader, error) {
-	runes := []rune(password)
-	if len(runes) > maxPassword {
-		password = string(runes[:maxPassword])
-	}
-	var err error
+func newReader(fbr fileBlockReader) *Reader {
 	r := new(Reader)
 	r.r = bytes.NewReader(nil) // initial reads will always return EOF
-	r.pr.r, err = newFileBlockReader(v, password)
-	return r, err
+	r.pr.r = fbr
+	return r
 }
 
 // NewReader creates a Reader reading from r.
 func NewReader(r io.Reader, password string) (*Reader, error) {
-	v, err := newVolume(r)
+	fbr, err := newFileBlockReader(r, password)
 	if err != nil {
 		return nil, err
 	}
-	return newReader(v, password)
+	return newReader(fbr), nil
 }
 
 // OpenReader opens a RAR archive specified by the name and returns a Reader.
 func OpenReader(name, password string) (*Reader, error) {
-	v, err := openVolume(name)
+	v, err := openVolume(name, password)
 	if err != nil {
 		return nil, err
 	}
-	return newReader(v, password)
+	return newReader(v), nil
 }

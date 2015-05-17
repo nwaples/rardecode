@@ -115,7 +115,7 @@ func (h *hash50) valid() bool {
 // archive50 implements fileBlockReader for RAR 5 file format archives
 type archive50 struct {
 	r        io.Reader // reader for current block data
-	v        *volume
+	v        io.Reader // reader for current archive volume
 	pass     []byte
 	blockKey []byte                // key used to encrypt blocks
 	multi    bool                  // archive is multi-volume
@@ -353,7 +353,7 @@ func (a *archive50) parseEncryptionBlock(b readBuf) error {
 }
 
 func (a *archive50) readBlockHeader() (*blockHeader50, error) {
-	r := io.Reader(a.v)
+	r := a.v
 	if a.blockKey != nil {
 		// block is encrypted
 		iv := a.buf[:16]
@@ -447,7 +447,7 @@ func (a *archive50) next() (*fileBlockHeader, error) {
 			if flags&endArc5NotLast == 0 || !a.multi {
 				return nil, io.EOF
 			}
-			err = a.v.next()
+			return nil, errArchiveContinues
 		default:
 			// discard block data
 			_, err = io.Copy(ioutil.Discard, a.r)
@@ -458,9 +458,11 @@ func (a *archive50) next() (*fileBlockHeader, error) {
 	}
 }
 
-func (a *archive50) initVolume() {
-	// reset encryption when opening new volume file
-	a.blockKey = nil
+func (a *archive50) version() int { return fileFmt50 }
+
+func (a *archive50) reset(r io.Reader) {
+	a.blockKey = nil // reset encryption when opening new volume file
+	a.v = r
 }
 
 // Read reads bytes from the current file block into p.
@@ -469,11 +471,10 @@ func (a *archive50) Read(p []byte) (int, error) {
 }
 
 // newArchive50 creates a new fileBlockReader for a Version 5 archive.
-func newArchive50(v *volume, password string) fileBlockReader {
+func newArchive50(r io.Reader, password string) fileBlockReader {
 	a := new(archive50)
-	a.v = v
+	a.v = r
 	a.pass = []byte(password)
 	a.buf = make([]byte, 100)
-	v.init = a.initVolume
 	return a
 }

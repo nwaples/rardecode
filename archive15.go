@@ -74,10 +74,11 @@ func (h *fileHash32) valid() bool {
 // archive15 implements fileBlockReader for RAR 1.5 file format archives
 type archive15 struct {
 	r         io.Reader // reader for current block data
-	v         *volume
-	dec       decoder // current decoder
-	decVer    byte    // current decoder version
-	multi     bool    // archive is multi-volume
+	v         io.Reader // reader for current archive volume
+	dec       decoder   // current decoder
+	decVer    byte      // current decoder version
+	multi     bool      // archive is multi-volume
+	old       bool      // archive uses old naming scheme
 	encrypted bool
 	pass      []uint16              // password in UTF-16
 	checksum  fileHash32            // file checksum
@@ -357,7 +358,7 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 func (a *archive15) readBlockHeader() (*blockHeader15, error) {
 	var err error
 	b := a.buf[:7]
-	r := io.Reader(a.v)
+	r := a.v
 	if a.encrypted {
 		salt := a.buf[:saltSize]
 		_, err = io.ReadFull(r, salt)
@@ -434,14 +435,12 @@ func (a *archive15) next() (*fileBlockHeader, error) {
 		case blockArc:
 			a.encrypted = h.flags&arcEncrypted > 0
 			a.multi = h.flags&arcVolume > 0
-			if a.v.num == 0 {
-				a.v.old = h.flags&arcNewNaming == 0
-			}
+			a.old = h.flags&arcNewNaming == 0
 		case blockEnd:
 			if h.flags&endArcNotLast == 0 || !a.multi {
 				return nil, io.EOF
 			}
-			err = a.v.next()
+			return nil, errArchiveContinues
 		default:
 			_, err = io.Copy(ioutil.Discard, a.r)
 		}
@@ -451,9 +450,11 @@ func (a *archive15) next() (*fileBlockHeader, error) {
 	}
 }
 
-func (a *archive15) initVolume() {
-	// reset encryption when opening new volume file
-	a.encrypted = false
+func (a *archive15) version() int { return fileFmt15 }
+
+func (a *archive15) reset(r io.Reader) {
+	a.encrypted = false // reset encryption when opening new volume file
+	a.v = r
 }
 
 // Read reads bytes from the current file block into p.
@@ -462,12 +463,11 @@ func (a *archive15) Read(p []byte) (int, error) {
 }
 
 // newArchive15 creates a new fileBlockReader for a Version 1.5 archive
-func newArchive15(v *volume, password string) fileBlockReader {
+func newArchive15(r io.Reader, password string) fileBlockReader {
 	a := new(archive15)
-	a.v = v
+	a.v = r
 	a.pass = utf16.Encode([]rune(password)) // convert to UTF-16
 	a.checksum.Hash32 = crc32.NewIEEE()
 	a.buf = readBuf(make([]byte, 100))
-	v.init = a.initVolume
 	return a
 }

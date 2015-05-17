@@ -30,7 +30,7 @@ var (
 	errUnknownArc         = errors.New("rardecode: unknown archive version")
 	errUnknownDecoder     = errors.New("rardecode: unknown decoder version")
 	errUnsupportedDecoder = errors.New("rardecode: unsupported decoder version")
-	errNoNextVolumeName   = errors.New("rardecode: can't determine next volume name")
+	errArchiveContinues   = errors.New("rardecode: archive continues in next volume")
 	errDecoderOutOfData   = errors.New("rardecode: decoder expected more data than is in packed file")
 
 	reNew = regexp.MustCompile(`(?:(\d+)[^\.]+)*(\d+)\D*$`) // for new style rar file naming
@@ -133,31 +133,30 @@ func findSig(br *bufio.Reader) (int, error) {
 	return 0, errNoSig
 }
 
-// volume is a volume in a multi-volume RAR archive.
-// Read's on the volume will read from the current volume file.
+// volume extends a fileBlockReader to be used across multiple
+// files in a multi-volume archive
 type volume struct {
-	*bufio.Reader        // buffered reader for current volume file
-	name          string // current volume name
-	num           int    // volume number
-	ver           int    // file format version
-	old           bool   // uses old naming scheme
-	init          func() // called when next volume is opened
+	fileBlockReader
+	f    *os.File      // current file handle
+	br   *bufio.Reader // buffered reader for current volume file
+	name string        // current volume name
+	num  int           // volume number
+	old  bool          // uses old naming scheme
 }
 
-// next opens the next volume in a multi-volume archive.
-func (v *volume) next() error {
+// nextVolName updates name to the next filename in the archive.
+func (v *volume) nextVolName() {
 	var lo, hi int
 
-	// Determine next volume name
-	if len(v.name) == 0 {
-		return errNoNextVolumeName
-	}
 	dir, file := filepath.Split(v.name)
 	if v.num == 0 {
 		ext := filepath.Ext(file)
 		switch strings.ToLower(ext) {
 		case "", ".", ".exe", ".sfx":
 			file = file[:len(file)-len(ext)] + ".rar"
+		}
+		if a, ok := v.fileBlockReader.(*archive15); ok {
+			v.old = a.old
 		}
 	}
 	if !v.old {
@@ -186,55 +185,69 @@ func (v *volume) next() error {
 	}
 	vol := fmt.Sprintf("%0"+fmt.Sprint(hi-lo)+"d", n)
 	v.name = dir + file[:lo] + vol + file[hi:]
-	v.num++
-
-	// Open next volume file
-	f, err := os.Open(v.name)
-	if err != nil {
-		return err
-	}
-	v.Reader.Reset(f)
-	ver, err := findSig(v.Reader)
-	if err != nil {
-		return err
-	}
-	if v.ver != ver {
-		return errVerMismatch
-	}
-	if v.init != nil {
-		v.init()
-	}
-	return nil
 }
 
-func newVolume(r io.Reader) (*volume, error) {
-	v := new(volume)
-	if br, ok := r.(*bufio.Reader); ok {
-		v.Reader = br
-	} else {
-		v.Reader = bufio.NewReader(r)
+func (v *volume) next() (*fileBlockHeader, error) {
+	for {
+		h, err := v.fileBlockReader.next()
+		if err != errArchiveContinues {
+			return h, err
+		}
+
+		v.f.Close()
+		v.nextVolName()
+		v.f, err = os.Open(v.name) // Open next volume file
+		if err != nil {
+			return nil, err
+		}
+		v.num++
+		v.br.Reset(v.f)
+		ver, err := findSig(v.br)
+		if err != nil {
+			return nil, err
+		}
+		if v.version() != ver {
+			return nil, errVerMismatch
+		}
+		v.reset(v.br) // reset fileBlockReader to use new file
 	}
+}
+
+func (v *volume) Close() error {
+	return v.f.Close()
+}
+
+func openVolume(name, password string) (*volume, error) {
 	var err error
-	v.ver, err = findSig(v.Reader)
-	return v, err
-}
-
-func openVolume(name string) (*volume, error) {
-	r, err := os.Open(name)
+	v := new(volume)
+	v.name = name
+	v.f, err = os.Open(name)
 	if err != nil {
 		return nil, err
 	}
-	v, err := newVolume(r)
-	v.name = name
+	v.br = bufio.NewReader(v.f)
+	v.fileBlockReader, err = newFileBlockReader(v.br, password)
 	return v, err
 }
 
-func newFileBlockReader(v *volume, pass string) (fileBlockReader, error) {
-	switch v.ver {
+func newFileBlockReader(r io.Reader, pass string) (fileBlockReader, error) {
+	br, ok := r.(*bufio.Reader)
+	if !ok {
+		br = bufio.NewReader(r)
+	}
+	runes := []rune(pass)
+	if len(runes) > maxPassword {
+		pass = string(runes[:maxPassword])
+	}
+	ver, err := findSig(br)
+	if err != nil {
+		return nil, err
+	}
+	switch ver {
 	case fileFmt15:
-		return newArchive15(v, pass), nil
+		return newArchive15(br, pass), nil
 	case fileFmt50:
-		return newArchive50(v, pass), nil
+		return newArchive50(br, pass), nil
 	}
 	return nil, errUnknownArc
 }
