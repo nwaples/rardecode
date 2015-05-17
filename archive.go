@@ -227,7 +227,11 @@ func openVolume(name, password string) (*volume, error) {
 	}
 	v.br = bufio.NewReader(v.f)
 	v.fileBlockReader, err = newFileBlockReader(v.br, password)
-	return v, err
+	if err != nil {
+		v.f.Close()
+		return nil, err
+	}
+	return v, nil
 }
 
 func newFileBlockReader(r io.Reader, pass string) (fileBlockReader, error) {
