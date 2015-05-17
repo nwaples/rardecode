@@ -229,11 +229,9 @@ func (r *Reader) Next() (*FileHeader, error) {
 	return fh, nil
 }
 
-func newReader(fbr fileBlockReader) *Reader {
-	r := new(Reader)
+func (r *Reader) init(fbr fileBlockReader) {
 	r.r = bytes.NewReader(nil) // initial reads will always return EOF
 	r.pr.r = fbr
-	return r
 }
 
 // NewReader creates a Reader reading from r.
@@ -242,14 +240,29 @@ func NewReader(r io.Reader, password string) (*Reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newReader(fbr), nil
+	rr := new(Reader)
+	rr.init(fbr)
+	return rr, nil
 }
 
-// OpenReader opens a RAR archive specified by the name and returns a Reader.
-func OpenReader(name, password string) (*Reader, error) {
+type ReadCloser struct {
+	v *volume
+	Reader
+}
+
+// Close closes the rar file.
+func (rc *ReadCloser) Close() error {
+	return rc.v.Close()
+}
+
+// OpenReader opens a RAR archive specified by the name and returns a ReadCloser.
+func OpenReader(name, password string) (*ReadCloser, error) {
 	v, err := openVolume(name, password)
 	if err != nil {
 		return nil, err
 	}
-	return newReader(v), nil
+	rc := new(ReadCloser)
+	rc.v = v
+	rc.Reader.init(v)
+	return rc, nil
 }
