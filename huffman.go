@@ -152,16 +152,6 @@ func readCodeLengthTable(br bitReader, codeLength []byte, addOld bool) error {
 				return err
 			}
 			if cnt > 0 {
-				//cnt += 1
-				bitlength[i] = 0
-				for cnt >= 0 { // && i < len(bitlength) {
-					i++
-					bitlength[i] = 0
-					cnt--
-				}
-				continue
-			}
-			if cnt > 0 {
 				// array already zero'd dont need to explicitly set
 				i += cnt + 1
 				continue
