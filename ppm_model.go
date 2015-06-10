@@ -628,7 +628,7 @@ func (m *model) update(s *state) {
 }
 
 func (m *model) ReadByte() (byte, error) {
-	if m.minC == nil {
+	if m.minC == nil || m.minC.states == nil {
 		return 0, errCorruptPPM
 	}
 	var s *state
@@ -643,7 +643,7 @@ func (m *model) ReadByte() (byte, error) {
 		for len(m.minC.states) == n {
 			m.orderFall++
 			m.minC = m.minC.suffix
-			if m.minC == nil {
+			if m.minC == nil || m.minC.states == nil {
 				return 0, errCorruptPPM
 			}
 		}
