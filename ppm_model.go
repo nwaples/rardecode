@@ -318,6 +318,11 @@ func (m *model) decodeSymbol1() (*state, error) {
 	c := m.minC
 	states := c.states
 	scale := uint32(c.summFreq)
+	// protect against divide by zero
+	// TODO: look at why this happens, may be problem elsewhere
+	if scale == 0 {
+		return nil, errCorruptPPM
+	}
 	count := m.rc.currentCount(scale)
 	m.prevSuccess = 0
 
