@@ -45,6 +45,12 @@ type rarBitReader struct {
 	n uint
 }
 
+func (r *rarBitReader) reset(br io.ByteReader) {
+	r.r = br
+	r.n = 0
+	r.v = 0
+}
+
 func (r *rarBitReader) readBits(n uint) (int, error) {
 	for n > r.n {
 		c, err := r.r.ReadByte()

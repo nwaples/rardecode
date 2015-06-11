@@ -41,7 +41,11 @@ type decoder29 struct {
 
 // init intializes the decoder for decoding a new file.
 func (d *decoder29) init(r io.ByteReader, reset bool) error {
-	d.br = newRarBitReader(r)
+	if d.br == nil {
+		d.br = newRarBitReader(r)
+	} else {
+		d.br.reset(r)
+	}
 	d.eof = false
 	if reset {
 		d.initFilters()
