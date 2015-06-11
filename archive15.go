@@ -255,7 +255,7 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 	f.first = h.flags&fileSplitBefore == 0
 	f.last = h.flags&fileSplitAfter == 0
 
-	f.solid = a.solid || h.flags&fileSolid > 0
+	f.solid = h.flags&fileSolid > 0
 	f.IsDir = h.flags&fileWindowMask == fileWindowMask
 	if !f.IsDir {
 		f.winSize = uint(h.flags&fileWindowMask)>>5 + 16
@@ -457,6 +457,10 @@ func (a *archive15) version() int { return fileFmt15 }
 func (a *archive15) reset(r io.Reader) {
 	a.encrypted = false // reset encryption when opening new volume file
 	a.v = r
+}
+
+func (a *archive15) isSolid() bool {
+	return a.solid
 }
 
 // Read reads bytes from the current file block into p.

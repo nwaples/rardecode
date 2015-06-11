@@ -102,6 +102,7 @@ type fileBlockReader interface {
 	io.Reader                        // Read's read data from the current file block
 	next() (*fileBlockHeader, error) // advances to the next file block
 	reset(r io.Reader)               // resets for new volume file
+	isSolid() bool                   // is archive solid
 	version() int                    // returns current archive format version
 }
 
@@ -215,7 +216,7 @@ func (r *Reader) Next() (*FileHeader, error) {
 			return nil, err
 		}
 		r.r = &r.dr
-		if h.solid {
+		if r.pr.r.isSolid() {
 			r.solidr = r.r
 		}
 	}
