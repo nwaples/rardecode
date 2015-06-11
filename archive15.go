@@ -79,6 +79,7 @@ type archive15 struct {
 	decVer    byte      // current decoder version
 	multi     bool      // archive is multi-volume
 	old       bool      // archive uses old naming scheme
+	solid     bool      // archive is a solid archive
 	encrypted bool
 	pass      []uint16              // password in UTF-16
 	checksum  fileHash32            // file checksum
@@ -254,7 +255,7 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 	f.first = h.flags&fileSplitBefore == 0
 	f.last = h.flags&fileSplitAfter == 0
 
-	f.solid = h.flags&fileSolid > 0
+	f.solid = a.solid || h.flags&fileSolid > 0
 	f.IsDir = h.flags&fileWindowMask == fileWindowMask
 	if !f.IsDir {
 		f.winSize = uint(h.flags&fileWindowMask)>>5 + 16
@@ -436,6 +437,7 @@ func (a *archive15) next() (*fileBlockHeader, error) {
 			a.encrypted = h.flags&arcEncrypted > 0
 			a.multi = h.flags&arcVolume > 0
 			a.old = h.flags&arcNewNaming == 0
+			a.solid = h.flags&arcSolid > 0
 		case blockEnd:
 			if h.flags&endArcNotLast == 0 || !a.multi {
 				return nil, io.EOF

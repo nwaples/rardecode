@@ -119,6 +119,7 @@ type archive50 struct {
 	pass     []byte
 	blockKey []byte                // key used to encrypt blocks
 	multi    bool                  // archive is multi-volume
+	solid    bool                  // is a solid archive
 	checksum hash50                // file checksum
 	dec      decoder               // optional decoder used to unpack file
 	buf      readBuf               // temporary buffer
@@ -281,7 +282,7 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 	}
 
 	flags = h.data.uvarint() // compression flags
-	f.solid = flags&0x0040 > 0
+	f.solid = a.solid || flags&0x0040 > 0
 	f.winSize = uint(flags&0x3C00)>>10 + 17
 	method := (flags >> 7) & 7 // compression method (0 == none)
 	if f.first && method != 0 {
@@ -440,6 +441,7 @@ func (a *archive50) next() (*fileBlockHeader, error) {
 		case block5Arc:
 			flags := h.data.uvarint()
 			a.multi = flags&arc5MultiVol > 0
+			a.solid = flags&arc5Solid > 0
 		case block5Encrypt:
 			err = a.parseEncryptionBlock(h.data)
 		case block5End:
