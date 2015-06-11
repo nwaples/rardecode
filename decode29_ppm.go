@@ -42,6 +42,10 @@ func (d *ppm29Decoder) init(br *rarBitReader) error {
 	return d.m.init(d.br, reset, maxOrder)
 }
 
+func (d *ppm29Decoder) reset() {
+	d.esc = 2
+}
+
 func (d *ppm29Decoder) readFilterData() ([]byte, error) {
 	c, err := d.m.ReadByte()
 	if err != nil {

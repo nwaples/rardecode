@@ -50,6 +50,7 @@ func (d *decoder29) init(r io.ByteReader, reset bool) error {
 	if reset {
 		d.initFilters()
 		d.lz.reset()
+		d.ppm.reset()
 		d.decode = nil
 	}
 	if d.decode == nil {
