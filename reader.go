@@ -171,11 +171,11 @@ func (f *packedFileReader) Read(p []byte) (int, error) {
 
 // Reader provides sequential access to files in a RAR archive.
 type Reader struct {
-	r     io.Reader        // reader for current unpacked file
-	pr    packedFileReader // reader for current packed file
-	dr    decodeReader     // reader for decoding and filters if file is compressed
-	cksum fileChecksum     // current file checksum
-	solid bool             // file is solid
+	r      io.Reader        // reader for current unpacked file
+	pr     packedFileReader // reader for current packed file
+	dr     decodeReader     // reader for decoding and filters if file is compressed
+	cksum  fileChecksum     // current file checksum
+	solidr io.Reader        // reader for solid file
 }
 
 // Read reads from the current file in the RAR archive.
@@ -189,9 +189,9 @@ func (r *Reader) Read(p []byte) (int, error) {
 
 // Next advances to the next file in the archive.
 func (r *Reader) Next() (*FileHeader, error) {
-	if r.solid {
-		// solid files must be read fully to update decode tables and window
-		if _, err := io.Copy(ioutil.Discard, r.r); err != nil {
+	if r.solidr != nil {
+		// solid files must be read fully to update decoder information
+		if _, err := io.Copy(ioutil.Discard, r.solidr); err != nil {
 			return nil, err
 		}
 	}
@@ -200,7 +200,7 @@ func (r *Reader) Next() (*FileHeader, error) {
 	if err != nil {
 		return nil, err
 	}
-	r.solid = h.solid
+	r.solidr = nil
 
 	r.r = io.Reader(&r.pr) // start with packed file reader
 
@@ -215,6 +215,9 @@ func (r *Reader) Next() (*FileHeader, error) {
 			return nil, err
 		}
 		r.r = &r.dr
+		if h.solid {
+			r.solidr = r.r
+		}
 	}
 	if h.UnPackedSize >= 0 && !h.UnKnownSize {
 		// Limit reading to UnPackedSize as there may be padding
