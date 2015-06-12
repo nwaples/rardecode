@@ -125,7 +125,7 @@ func (d *ppm29Decoder) decode(w *window) ([]byte, error) {
 		}
 		w.copyBytes(int(len)+4, 1)
 	default:
-		w.writeByte(c)
+		w.writeByte(d.esc)
 	}
 	return nil, nil
 }
