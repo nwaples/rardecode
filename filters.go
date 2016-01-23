@@ -99,7 +99,7 @@ func filterArm(buf []byte, offset int64) ([]byte, error) {
 			n := uint(buf[i])
 			n += uint(buf[i+1]) * 0x100
 			n += uint(buf[i+2]) * 0x10000
-			n -= (n + uint(i)) / 4
+			n -= (uint(offset) + uint(i)) / 4
 			buf[i] = byte(n)
 			buf[i+1] = byte(n >> 8)
 			buf[i+2] = byte(n >> 16)
