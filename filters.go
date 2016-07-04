@@ -31,6 +31,7 @@ var (
 		{0xad576887, 53, e8FilterV3},
 		{0x3cd7e57e, 57, e8e9FilterV3},
 		{0x0e06077d, 29, deltaFilterV3},
+		{0xbc85e701, 216, filterAudioV3},
 	}
 )
 
@@ -91,6 +92,84 @@ func filterDelta(n int, buf []byte) ([]byte, error) {
 
 func deltaFilterV3(r map[int]uint32, global, buf []byte, offset int64) ([]byte, error) {
 	return filterDelta(int(r[0]), buf)
+}
+
+func abs(n int) int {
+	if n < 0 {
+		n = -n
+	}
+	return n
+}
+
+func filterAudioV3(r map[int]uint32, global, buf []byte, offset int64) ([]byte, error) {
+	var res []byte
+	l := len(buf)
+	if cap(buf) >= 2*l {
+		res = buf[l : 2*l] // use unused capacity
+	} else {
+		res = make([]byte, l, 2*l)
+	}
+
+	chans := int(r[0])
+	for c := 0; c < chans; c++ {
+		var prevByte, byteCount int
+		var diff [7]int
+		var d, k [3]int
+
+		for i := c; i < len(res); i += chans {
+			predicted := prevByte<<3 + k[0]*d[0] + k[1]*d[1] + k[2]*d[2]
+			predicted = int(int8(predicted >> 3))
+
+			curByte := int(int8(buf[0]))
+			buf = buf[1:]
+			predicted -= curByte
+			res[i] = uint8(predicted)
+
+			dd := curByte << 3
+			diff[0] += abs(dd)
+			diff[1] += abs(dd - d[0])
+			diff[2] += abs(dd + d[0])
+			diff[3] += abs(dd - d[1])
+			diff[4] += abs(dd + d[1])
+			diff[5] += abs(dd - d[2])
+			diff[6] += abs(dd + d[2])
+
+			prevDelta := int(int8(predicted - prevByte))
+			prevByte = predicted
+			d[2] = d[1]
+			d[1] = prevDelta - d[0]
+			d[0] = prevDelta
+
+			if byteCount&0x1f == 0 {
+				min := diff[0]
+				diff[0] = 0
+				n := 0
+				for j := 1; j < len(diff); j++ {
+					if diff[j] < min {
+						min = diff[j]
+						n = j
+					}
+					diff[j] = 0
+				}
+				n--
+				if n >= 0 {
+					m := n / 2
+					if n%2 == 0 {
+						if k[m] >= -16 {
+							k[m]--
+						}
+					} else {
+						if k[m] < 16 {
+							k[m]++
+						}
+					}
+				}
+			}
+			byteCount++
+		}
+
+	}
+	return res, nil
 }
 
 func filterArm(buf []byte, offset int64) ([]byte, error) {
