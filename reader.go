@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"io/ioutil"
+	"os"
 	"time"
 )
 
@@ -72,7 +73,7 @@ type FileHeader struct {
 	Name             string    // file name using '/' as the directory separator
 	IsDir            bool      // is a directory
 	HostOS           byte      // Host OS the archive was created on
-	Attributes       int64     // file attributes
+	Attributes       int64     // Host OS specific file attributes
 	PackedSize       int64     // packed file size (or first block if the file spans volumes)
 	UnPackedSize     int64     // unpacked file size
 	UnKnownSize      bool      // unpacked file size is not known
@@ -80,6 +81,48 @@ type FileHeader struct {
 	CreationTime     time.Time // creation time (non-zero if set)
 	AccessTime       time.Time // access time (non-zero if set)
 	Version          int       // file version
+}
+
+// Mode returns an os.FileMode for the file, calculated from the Attributes field.
+func (f *FileHeader) Mode() os.FileMode {
+	var m os.FileMode
+
+	if f.IsDir {
+		m = os.ModeDir
+	}
+	if f.HostOS == HostOSWindows {
+		if f.IsDir {
+			m |= 0777
+		} else if f.Attributes&1 > 0 {
+			m |= 0444 // readonly
+		} else {
+			m |= 0666
+		}
+		return m
+	}
+	// assume unix perms for all remaining os types
+	m |= os.FileMode(f.Attributes) & os.ModePerm
+
+	// only check other bits on unix host created archives
+	if f.HostOS != HostOSUnix {
+		return m
+	}
+
+	if f.Attributes&0x200 != 0 {
+		m |= os.ModeSticky
+	}
+	if f.Attributes&0x400 != 0 {
+		m |= os.ModeSetgid
+	}
+	if f.Attributes&0x800 != 0 {
+		m |= os.ModeSetuid
+	}
+
+	// Check for additional file types.
+	if f.Attributes&0xF000 == 0xA000 {
+		m |= os.ModeSymlink
+	}
+	return m
 }
 
 // fileBlockHeader represents a file block in a RAR archive.
