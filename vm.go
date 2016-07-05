@@ -426,9 +426,9 @@ func shl(v *vm, bm bool, op []operand) {
 		v.fl = flagZ
 	} else {
 		v.fl = r & flagS
-		if (v1<<(v2-1))&0x80000000 > 0 {
-			v.fl |= flagC
-		}
+	}
+	if (v1<<(v2-1))&0x80000000 > 0 {
+		v.fl |= flagC
 	}
 }
 
@@ -441,9 +441,9 @@ func shr(v *vm, bm bool, op []operand) {
 		v.fl = flagZ
 	} else {
 		v.fl = r & flagS
-		if (v1>>(v2-1))&0x1 > 0 {
-			v.fl |= flagC
-		}
+	}
+	if (v1>>(v2-1))&0x1 > 0 {
+		v.fl |= flagC
 	}
 }
 
@@ -456,9 +456,9 @@ func sar(v *vm, bm bool, op []operand) {
 		v.fl = flagZ
 	} else {
 		v.fl = r & flagS
-		if (v1>>(v2-1))&0x1 > 0 {
-			v.fl |= flagC
-		}
+	}
+	if (v1>>(v2-1))&0x1 > 0 {
+		v.fl |= flagC
 	}
 }
 
