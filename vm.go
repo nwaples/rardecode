@@ -342,7 +342,7 @@ func or(v *vm, bm bool, op []operand) {
 }
 
 func test(v *vm, bm bool, op []operand) {
-	r := op[0].get(v, bm)
+	r := op[0].get(v, bm) & op[1].get(v, bm)
 	if r == 0 {
 		v.fl = flagZ
 	} else {
