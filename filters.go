@@ -31,6 +31,7 @@ var (
 		{0xad576887, 53, e8FilterV3},
 		{0x3cd7e57e, 57, e8e9FilterV3},
 		{0x0e06077d, 29, deltaFilterV3},
+		{0x1c2c5dc8, 149, filterRGBV3},
 		{0xbc85e701, 216, filterAudioV3},
 	}
 )
@@ -99,6 +100,57 @@ func abs(n int) int {
 		n = -n
 	}
 	return n
+}
+
+func filterRGBV3(r map[int]uint32, global, buf []byte, offset int64) ([]byte, error) {
+	width := int(r[0] - 3)
+	posR := int(r[1])
+	if posR < 0 || width < 0 {
+		return buf, nil
+	}
+
+	var res []byte
+	l := len(buf)
+	if cap(buf) >= 2*l {
+		res = buf[l : 2*l] // use unused capacity
+	} else {
+		res = make([]byte, l, 2*l)
+	}
+
+	for c := 0; c < 3; c++ {
+		var prevByte int
+		for i := c; i < len(res); i += 3 {
+			var predicted int
+			upperPos := i - width
+			if upperPos >= 3 {
+				upperByte := int(res[upperPos])
+				upperLeftByte := int(res[upperPos-3])
+				predicted = prevByte + upperByte - upperLeftByte
+				pa := abs(predicted - prevByte)
+				pb := abs(predicted - upperByte)
+				pc := abs(predicted - upperLeftByte)
+				if pa <= pb && pa <= pc {
+					predicted = prevByte
+				} else if pb <= pc {
+					predicted = upperByte
+				} else {
+					predicted = upperLeftByte
+				}
+			} else {
+				predicted = prevByte
+			}
+			prevByte = (predicted - int(buf[0])) & 0xFF
+			res[i] = uint8(prevByte)
+			buf = buf[1:]
+		}
+
+	}
+	for i := posR; i < len(res)-2; i += 3 {
+		c := res[i+1]
+		res[i] += c
+		res[i+2] += c
+	}
+	return res, nil
 }
 
 func filterAudioV3(r map[int]uint32, global, buf []byte, offset int64) ([]byte, error) {
