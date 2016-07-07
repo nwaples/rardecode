@@ -209,7 +209,7 @@ func (m *model) restart() {
 
 }
 
-func (m *model) init(br io.ByteReader, reset bool, maxOrder int) error {
+func (m *model) init(br io.ByteReader, reset bool, maxOrder, maxMB int) error {
 	err := m.rc.init(br)
 	if err != nil {
 		return err
