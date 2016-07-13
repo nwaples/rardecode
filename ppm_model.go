@@ -141,8 +141,16 @@ type state struct {
 
 type context struct {
 	sf     uint16
-	states []state
+	st     []state
 	suffix *context
+}
+
+func (c *context) numStates() int {
+	return len(c.st)
+}
+
+func (c *context) states() []state {
+	return c.st
 }
 
 func (c *context) summFreq() uint16 {
@@ -188,8 +196,8 @@ func (m *model) restart() {
 
 	c := new(context)
 	c.setSummFreq(257)
-	c.states = make([]state, 256)
-	states := c.states
+	c.st = make([]state, 256)
+	states := c.states()
 	for i := range states {
 		states[i] = state{sym: byte(i), freq: 1}
 	}
@@ -213,7 +221,6 @@ func (m *model) restart() {
 			m.see2Cont[i][j] = see
 		}
 	}
-
 }
 
 func (m *model) init(br io.ByteReader, reset bool, maxOrder, maxMB int) error {
@@ -245,8 +252,9 @@ func (m *model) rescale(s *state) *state {
 	var summFreq uint16
 
 	s.freq += 4
-	states := c.states
+	states := c.states()
 	escFreq := c.summFreq() + 4
+
 	for i := range states {
 		f := states[i].freq
 		escFreq -= uint16(f)
@@ -274,7 +282,7 @@ func (m *model) rescale(s *state) *state {
 		i--
 		escFreq++
 	}
-	c.states = states[:i+1]
+	c.st = states[:i+1]
 	s = &states[0]
 	if i == 0 {
 		for {
@@ -292,9 +300,9 @@ func (m *model) rescale(s *state) *state {
 
 func (m *model) decodeBinSymbol() (*state, error) {
 	c := m.minC
-	s := &c.states[0]
+	s := &c.states()[0]
 
-	ns := len(c.suffix.states)
+	ns := c.suffix.numStates()
 	i := m.prevSuccess + ns2BSIndex[ns-1] + byte(m.runLength>>26)&0x20
 	if m.prevSym >= 64 {
 		i += 8
@@ -325,7 +333,7 @@ func (m *model) decodeBinSymbol() (*state, error) {
 
 func (m *model) decodeSymbol1() (*state, error) {
 	c := m.minC
-	states := c.states
+	states := c.states()
 	scale := uint32(c.summFreq())
 	// protect against divide by zero
 	// TODO: look at why this happens, may be problem elsewhere
@@ -367,7 +375,7 @@ func (m *model) decodeSymbol1() (*state, error) {
 }
 
 func (m *model) makeEscFreq(c *context, numMasked int) *see2Context {
-	ns := len(c.states)
+	ns := c.numStates()
 	if ns == 256 {
 		return nil
 	}
@@ -377,7 +385,7 @@ func (m *model) makeEscFreq(c *context, numMasked int) *see2Context {
 	if m.prevSym >= 64 {
 		i = 8
 	}
-	if diff < len(c.suffix.states)-ns {
+	if diff < c.suffix.numStates()-ns {
 		i++
 	}
 	if int(c.summFreq()) < 11*ns {
@@ -397,7 +405,7 @@ func (m *model) decodeSymbol2(numMasked int) (*state, error) {
 
 	var i int
 	var hi uint32
-	states := c.states
+	states := c.states()
 	sl := make([]*state, len(states)-numMasked)
 	for j := range sl {
 		for m.charMask[states[i].sym] == m.escCount {
@@ -446,7 +454,7 @@ func (m *model) decodeSymbol2(numMasked int) (*state, error) {
 
 func (c *context) findState(sym byte) *state {
 	var i int
-	states := c.states
+	states := c.states()
 	for i = range states {
 		if states[i].sym == sym {
 			break
@@ -485,7 +493,7 @@ func (m *model) createSuccessors(s, ss *state) *context {
 	up.sym = byte(s.succ.sf) // get symbol from heap (context)
 	up.succ = s.succ.suffix  // get next heap address (context)
 
-	states := c.states
+	states := c.states()
 	if len(states) > 1 {
 		s = c.findState(up.sym)
 
@@ -506,7 +514,7 @@ func (m *model) createSuccessors(s, ss *state) *context {
 	}
 
 	for i := len(sl) - 1; i >= 0; i-- {
-		c = &context{states: []state{up}, suffix: c}
+		c = &context{st: []state{up}, suffix: c}
 		sl[i].succ = c
 	}
 	return c
@@ -524,7 +532,7 @@ func (m *model) update(s *state) {
 
 	if s.freq < maxFreq/4 && m.minC.suffix != nil {
 		c := m.minC.suffix
-		states := c.states
+		states := c.states()
 
 		var i int
 		if len(states) > 1 {
@@ -574,7 +582,7 @@ func (m *model) update(s *state) {
 		s.succ = succ
 		minC = m.minC
 	} else {
-		if s.succ.states == nil {
+		if s.succ.states() == nil {
 			minC = m.createSuccessors(s, ss)
 			if minC == nil {
 				m.restart()
@@ -593,12 +601,12 @@ func (m *model) update(s *state) {
 		}
 	}
 
-	n := len(m.minC.states)
+	n := m.minC.numStates()
 	s0 := int(m.minC.summFreq()) - n - int(s.freq-1)
 	for c := m.maxC; c != m.minC; c = c.suffix {
 		var summFreq uint16
 
-		states := c.states
+		states := c.states()
 		if ns := len(states); ns != 1 {
 			summFreq = c.summFreq()
 			if 4*ns <= n && int(summFreq) <= 8*ns {
@@ -646,7 +654,7 @@ func (m *model) update(s *state) {
 			}
 			summFreq += 3
 		}
-		c.states = append(c.states, state{s.sym, freq, succ})
+		c.st = append(c.states(), state{s.sym, freq, succ})
 		c.setSummFreq(summFreq)
 	}
 	m.minC = minC
@@ -654,22 +662,22 @@ func (m *model) update(s *state) {
 }
 
 func (m *model) ReadByte() (byte, error) {
-	if m.minC == nil || m.minC.states == nil {
+	if m.minC == nil || m.minC.states() == nil {
 		return 0, errCorruptPPM
 	}
 	var s *state
 	var err error
-	if len(m.minC.states) == 1 {
+	if m.minC.numStates() == 1 {
 		s, err = m.decodeBinSymbol()
 	} else {
 		s, err = m.decodeSymbol1()
 	}
 	for s == nil && err == nil {
-		n := len(m.minC.states)
-		for len(m.minC.states) == n {
+		n := m.minC.numStates()
+		for m.minC.numStates() == n {
 			m.orderFall++
 			m.minC = m.minC.suffix
-			if m.minC == nil || m.minC.states == nil {
+			if m.minC == nil || m.minC.states() == nil {
 				return 0, errCorruptPPM
 			}
 		}
@@ -682,7 +690,7 @@ func (m *model) ReadByte() (byte, error) {
 	// save sym so it doesn't get overwritten by a possible restart()
 	sym := s.sym
 
-	if m.orderFall == 0 && s.succ != nil && s.succ.states != nil {
+	if m.orderFall == 0 && s.succ != nil && s.succ.states() != nil {
 		m.minC = s.succ
 		m.maxC = m.minC
 	} else {
