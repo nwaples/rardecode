@@ -538,11 +538,12 @@ func (m *model) update(s *state) {
 
 	if m.orderFall == 0 {
 		c := m.createSuccessors(s, ss)
-		m.minC = c
-		m.maxC = c
-		s.succ = c
 		if c == nil {
 			m.restart()
+		} else {
+			m.minC = c
+			m.maxC = c
+			s.succ = c
 		}
 		return
 	}
@@ -667,7 +668,7 @@ func (m *model) ReadByte() (byte, error) {
 
 	if m.orderFall == 0 && s.succ != nil && s.succ.states != nil {
 		m.minC = s.succ
-		m.maxC = s.succ
+		m.maxC = m.minC
 	} else {
 		m.update(s)
 	}
