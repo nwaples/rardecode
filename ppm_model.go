@@ -658,12 +658,15 @@ func (m *model) ReadByte() (byte, error) {
 		return 0, err
 	}
 
+	// save sym so it doesn't get overwritten by a possible restart()
+	sym := s.sym
+
 	if m.orderFall == 0 && s.succ != nil && s.succ.states != nil {
 		m.minC = s.succ
 		m.maxC = s.succ
 	} else {
 		m.update(s)
 	}
-	m.prevSym = s.sym
-	return s.sym, nil
+	m.prevSym = sym
+	return sym, nil
 }
