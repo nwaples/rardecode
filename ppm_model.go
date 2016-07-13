@@ -559,17 +559,20 @@ func (m *model) update(s *state) {
 	prevHeap.suffix = succ
 	m.heapC = succ
 
-	minC := s.succ
-	if minC == nil {
+	var minC *context
+
+	if s.succ == nil {
 		s.succ = succ
 		minC = m.minC
 	} else {
-		if minC.states == nil {
+		if s.succ.states == nil {
 			minC = m.createSuccessors(s, ss)
 			if minC == nil {
 				m.restart()
 				return
 			}
+		} else {
+			minC = s.succ
 		}
 		m.orderFall--
 		if m.orderFall == 0 {
