@@ -140,9 +140,17 @@ type state struct {
 }
 
 type context struct {
-	summFreq uint16
-	states   []state
-	suffix   *context
+	sf     uint16
+	states []state
+	suffix *context
+}
+
+func (c *context) summFreq() uint16 {
+	return c.sf
+}
+
+func (c *context) setSummFreq(f uint16) {
+	c.sf = f
 }
 
 type model struct {
@@ -179,7 +187,7 @@ func (m *model) restart() {
 	m.prevSuccess = 0
 
 	c := new(context)
-	c.summFreq = 257
+	c.setSummFreq(257)
 	c.states = make([]state, 256)
 	states := c.states
 	for i := range states {
@@ -234,11 +242,11 @@ func (m *model) rescale(s *state) *state {
 	}
 	c := m.minC
 
+	var summFreq uint16
+
 	s.freq += 4
-	c.summFreq += 4
 	states := c.states
-	escFreq := c.summFreq
-	c.summFreq = 0
+	escFreq := c.summFreq() + 4
 	for i := range states {
 		f := states[i].freq
 		escFreq -= uint16(f)
@@ -246,7 +254,7 @@ func (m *model) rescale(s *state) *state {
 			f++
 		}
 		f >>= 1
-		c.summFreq += uint16(f)
+		summFreq += uint16(f)
 		states[i].freq = f
 
 		if i == 0 || f <= states[i-1].freq {
@@ -277,7 +285,8 @@ func (m *model) rescale(s *state) *state {
 			}
 		}
 	}
-	c.summFreq += escFreq - (escFreq >> 1)
+	summFreq += escFreq - (escFreq >> 1)
+	c.setSummFreq(summFreq)
 	return s
 }
 
@@ -317,7 +326,7 @@ func (m *model) decodeBinSymbol() (*state, error) {
 func (m *model) decodeSymbol1() (*state, error) {
 	c := m.minC
 	states := c.states
-	scale := uint32(c.summFreq)
+	scale := uint32(c.summFreq())
 	// protect against divide by zero
 	// TODO: look at why this happens, may be problem elsewhere
 	if scale == 0 {
@@ -335,7 +344,7 @@ func (m *model) decodeSymbol1() (*state, error) {
 		}
 		err := m.rc.decode(n-uint32(s.freq), n)
 		s.freq += 4
-		c.summFreq += 4
+		c.setSummFreq(uint16(scale + 4))
 		if i == 0 {
 			if 2*n > scale {
 				m.prevSuccess = 1
@@ -371,7 +380,7 @@ func (m *model) makeEscFreq(c *context, numMasked int) *see2Context {
 	if diff < len(c.suffix.states)-ns {
 		i++
 	}
-	if int(c.summFreq) < 11*ns {
+	if int(c.summFreq()) < 11*ns {
 		i += 2
 	}
 	if numMasked > diff {
@@ -431,7 +440,7 @@ func (m *model) decodeSymbol2(numMasked int) (*state, error) {
 	m.runLength = m.initRL
 
 	s.freq += 4
-	c.summFreq += 4
+	c.setSummFreq(c.summFreq() + 4)
 	return m.rescale(s), err
 }
 
@@ -473,15 +482,15 @@ func (m *model) createSuccessors(s, ss *state) *context {
 	}
 
 	var up state
-	up.sym = byte(s.succ.summFreq) // get symbol from heap (context)
-	up.succ = s.succ.suffix        // get next heap address (context)
+	up.sym = byte(s.succ.sf) // get symbol from heap (context)
+	up.succ = s.succ.suffix  // get next heap address (context)
 
 	states := c.states
 	if len(states) > 1 {
 		s = c.findState(up.sym)
 
 		cf := uint16(s.freq) - 1
-		s0 := c.summFreq - uint16(len(states)) - cf
+		s0 := c.summFreq() - uint16(len(states)) - cf
 
 		if 2*cf <= s0 {
 			if 5*cf > s0 {
@@ -528,7 +537,7 @@ func (m *model) update(s *state) {
 			}
 			if states[i].freq < maxFreq-9 {
 				states[i].freq += 2
-				c.summFreq += 2
+				c.setSummFreq(c.summFreq() + 2)
 			}
 		} else if states[0].freq < 32 {
 			states[0].freq++
@@ -555,7 +564,7 @@ func (m *model) update(s *state) {
 
 	succ := new(context)
 	prevHeap := m.heapC
-	prevHeap.summFreq = uint16(s.sym)
+	prevHeap.sf = uint16(s.sym)
 	prevHeap.suffix = succ
 	m.heapC = succ
 
@@ -585,15 +594,18 @@ func (m *model) update(s *state) {
 	}
 
 	n := len(m.minC.states)
-	s0 := int(m.minC.summFreq) - n - int(s.freq-1)
+	s0 := int(m.minC.summFreq()) - n - int(s.freq-1)
 	for c := m.maxC; c != m.minC; c = c.suffix {
+		var summFreq uint16
+
 		states := c.states
 		if ns := len(states); ns != 1 {
-			if 4*ns <= n && int(c.summFreq) <= 8*ns {
-				c.summFreq += 2
+			summFreq = c.summFreq()
+			if 4*ns <= n && int(summFreq) <= 8*ns {
+				summFreq += 2
 			}
 			if 2*ns < n {
-				c.summFreq++
+				summFreq++
 			}
 		} else {
 			p := &states[0]
@@ -602,14 +614,14 @@ func (m *model) update(s *state) {
 			} else {
 				p.freq = maxFreq - 4
 			}
-			c.summFreq = uint16(p.freq) + uint16(m.initEsc)
+			summFreq = uint16(p.freq) + uint16(m.initEsc)
 			if n > 3 {
-				c.summFreq++
+				summFreq++
 			}
 		}
 
-		cf := 2 * int(s.freq) * int(c.summFreq+6)
-		sf := s0 + int(c.summFreq)
+		cf := 2 * int(s.freq) * int(summFreq+6)
+		sf := s0 + int(summFreq)
 		var freq byte
 		if cf >= 6*sf {
 			switch {
@@ -622,7 +634,7 @@ func (m *model) update(s *state) {
 			default:
 				freq = 4
 			}
-			c.summFreq += uint16(freq)
+			summFreq += uint16(freq)
 		} else {
 			switch {
 			case cf >= 4*sf:
@@ -632,9 +644,10 @@ func (m *model) update(s *state) {
 			default:
 				freq = 1
 			}
-			c.summFreq += 3
+			summFreq += 3
 		}
 		c.states = append(c.states, state{s.sym, freq, succ})
+		c.setSummFreq(summFreq)
 	}
 	m.minC = minC
 	m.maxC = minC
