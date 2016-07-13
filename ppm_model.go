@@ -140,9 +140,9 @@ type state struct {
 }
 
 type context struct {
-	sf     uint16
-	st     []state
-	suffix *context
+	sf   uint16
+	st   []state
+	suff *context
 }
 
 func (c *context) numStates() int {
@@ -151,6 +151,14 @@ func (c *context) numStates() int {
 
 func (c *context) states() []state {
 	return c.st
+}
+
+func (c *context) suffix() *context {
+	return c.suff
+}
+
+func (c *context) setSuffix(sc *context) {
+	c.suff = sc
 }
 
 func (c *context) summFreq() uint16 {
@@ -302,7 +310,7 @@ func (m *model) decodeBinSymbol() (*state, error) {
 	c := m.minC
 	s := &c.states()[0]
 
-	ns := c.suffix.numStates()
+	ns := c.suffix().numStates()
 	i := m.prevSuccess + ns2BSIndex[ns-1] + byte(m.runLength>>26)&0x20
 	if m.prevSym >= 64 {
 		i += 8
@@ -385,7 +393,7 @@ func (m *model) makeEscFreq(c *context, numMasked int) *see2Context {
 	if m.prevSym >= 64 {
 		i = 8
 	}
-	if diff < c.suffix.numStates()-ns {
+	if diff < c.suffix().numStates()-ns {
 		i++
 	}
 	if int(c.summFreq()) < 11*ns {
@@ -471,8 +479,8 @@ func (m *model) createSuccessors(s, ss *state) *context {
 	}
 
 	c := m.minC
-	for c.suffix != nil {
-		c = c.suffix
+	for c.suffix() != nil {
+		c = c.suffix()
 
 		if ss == nil {
 			ss = c.findState(s.sym)
@@ -490,8 +498,8 @@ func (m *model) createSuccessors(s, ss *state) *context {
 	}
 
 	var up state
-	up.sym = byte(s.succ.sf) // get symbol from heap (context)
-	up.succ = s.succ.suffix  // get next heap address (context)
+	up.sym = byte(s.succ.sf)  // get symbol from heap (context)
+	up.succ = s.succ.suffix() // get next heap address (context)
 
 	states := c.states()
 	if len(states) > 1 {
@@ -514,7 +522,7 @@ func (m *model) createSuccessors(s, ss *state) *context {
 	}
 
 	for i := len(sl) - 1; i >= 0; i-- {
-		c = &context{st: []state{up}, suffix: c}
+		c = &context{st: []state{up}, suff: c}
 		sl[i].succ = c
 	}
 	return c
@@ -530,8 +538,8 @@ func (m *model) update(s *state) {
 
 	var ss *state // matching minC.suffix state
 
-	if s.freq < maxFreq/4 && m.minC.suffix != nil {
-		c := m.minC.suffix
+	if s.freq < maxFreq/4 && m.minC.suffix() != nil {
+		c := m.minC.suffix()
 		states := c.states()
 
 		var i int
@@ -573,7 +581,7 @@ func (m *model) update(s *state) {
 	succ := new(context)
 	prevHeap := m.heapC
 	prevHeap.sf = uint16(s.sym)
-	prevHeap.suffix = succ
+	prevHeap.suff = succ
 	m.heapC = succ
 
 	var minC *context
@@ -595,7 +603,7 @@ func (m *model) update(s *state) {
 		if m.orderFall == 0 {
 			succ = minC
 			if m.maxC != m.minC {
-				prevHeap.suffix = nil
+				prevHeap.suff = nil
 				m.heapC = prevHeap
 			}
 		}
@@ -603,7 +611,7 @@ func (m *model) update(s *state) {
 
 	n := m.minC.numStates()
 	s0 := int(m.minC.summFreq()) - n - int(s.freq-1)
-	for c := m.maxC; c != m.minC; c = c.suffix {
+	for c := m.maxC; c != m.minC; c = c.suffix() {
 		var summFreq uint16
 
 		states := c.states()
@@ -676,7 +684,7 @@ func (m *model) ReadByte() (byte, error) {
 		n := m.minC.numStates()
 		for m.minC.numStates() == n {
 			m.orderFall++
-			m.minC = m.minC.suffix
+			m.minC = m.minC.suffix()
 			if m.minC == nil || m.minC.states() == nil {
 				return 0, errCorruptPPM
 			}
