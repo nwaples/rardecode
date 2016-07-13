@@ -181,10 +181,9 @@ func (m *model) restart() {
 	c := new(context)
 	c.summFreq = 257
 	c.states = make([]state, 256)
-	for i := range c.states {
-		c.states[i].sym = byte(i)
-		c.states[i].freq = 1
-		c.states[i].succ = nil
+	states := c.states
+	for i := range states {
+		states[i] = state{sym: byte(i), freq: 1}
 	}
 	m.minC = c
 	m.maxC = c
@@ -269,7 +268,7 @@ func (m *model) rescale(s *state) *state {
 	}
 	c.states = states[:i+1]
 	s = &states[0]
-	if len(c.states) == 1 {
+	if i == 0 {
 		for {
 			s.freq -= s.freq >> 1
 			escFreq >>= 1
@@ -286,7 +285,8 @@ func (m *model) decodeBinSymbol() (*state, error) {
 	c := m.minC
 	s := &c.states[0]
 
-	i := m.prevSuccess + ns2BSIndex[len(c.suffix.states)-1] + byte(m.runLength>>26)&0x20
+	ns := len(c.suffix.states)
+	i := m.prevSuccess + ns2BSIndex[ns-1] + byte(m.runLength>>26)&0x20
 	if m.prevSym >= 64 {
 		i += 8
 	}
@@ -388,13 +388,14 @@ func (m *model) decodeSymbol2(numMasked int) (*state, error) {
 
 	var i int
 	var hi uint32
-	sl := make([]*state, len(c.states)-numMasked)
+	states := c.states
+	sl := make([]*state, len(states)-numMasked)
 	for j := range sl {
-		for m.charMask[c.states[i].sym] == m.escCount {
+		for m.charMask[states[i].sym] == m.escCount {
 			i++
 		}
-		hi += uint32(c.states[i].freq)
-		sl[j] = &c.states[i]
+		hi += uint32(states[i].freq)
+		sl[j] = &states[i]
 		i++
 	}
 
@@ -436,12 +437,13 @@ func (m *model) decodeSymbol2(numMasked int) (*state, error) {
 
 func (c *context) findState(sym byte) *state {
 	var i int
-	for i = range c.states {
-		if c.states[i].sym == sym {
+	states := c.states
+	for i = range states {
+		if states[i].sym == sym {
 			break
 		}
 	}
-	return &c.states[i]
+	return &states[i]
 }
 
 func (m *model) createSuccessors(s, ss *state) *context {
@@ -474,11 +476,12 @@ func (m *model) createSuccessors(s, ss *state) *context {
 	up.sym = byte(s.succ.summFreq) // get symbol from heap (context)
 	up.succ = s.succ.suffix        // get next heap address (context)
 
-	if len(c.states) > 1 {
+	states := c.states
+	if len(states) > 1 {
 		s = c.findState(up.sym)
 
 		cf := uint16(s.freq) - 1
-		s0 := c.summFreq - uint16(len(c.states)) - cf
+		s0 := c.summFreq - uint16(len(states)) - cf
 
 		if 2*cf <= s0 {
 			if 5*cf > s0 {
@@ -490,7 +493,7 @@ func (m *model) createSuccessors(s, ss *state) *context {
 			up.freq = byte(1 + (2*cf+3*s0-1)/(2*s0))
 		}
 	} else {
-		up.freq = c.states[0].freq
+		up.freq = states[0].freq
 	}
 
 	for i := len(sl) - 1; i >= 0; i-- {
@@ -580,7 +583,8 @@ func (m *model) update(s *state) {
 	n := len(m.minC.states)
 	s0 := int(m.minC.summFreq) - n - int(s.freq-1)
 	for c := m.maxC; c != m.minC; c = c.suffix {
-		if ns := len(c.states); ns != 1 {
+		states := c.states
+		if ns := len(states); ns != 1 {
 			if 4*ns <= n && int(c.summFreq) <= 8*ns {
 				c.summFreq += 2
 			}
@@ -588,7 +592,7 @@ func (m *model) update(s *state) {
 				c.summFreq++
 			}
 		} else {
-			p := &c.states[0]
+			p := &states[0]
 			if p.freq < maxFreq/4-1 {
 				p.freq += p.freq
 			} else {
