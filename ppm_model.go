@@ -479,8 +479,8 @@ func (m *model) createSuccessors(s, ss *state) *context {
 	}
 
 	c := m.minC
-	for c.suffix() != nil {
-		c = c.suffix()
+	for suff := c.suffix(); suff != nil; suff = c.suffix() {
+		c = suff
 
 		if ss == nil {
 			ss = c.findState(s.sym)
