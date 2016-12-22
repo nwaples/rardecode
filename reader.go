@@ -282,6 +282,8 @@ func (r *Reader) init(fbr fileBlockReader) {
 }
 
 // NewReader creates a Reader reading from r.
+// NewReader only supports single volume archives.
+// Multi-volume archives must use OpenReader.
 func NewReader(r io.Reader, password string) (*Reader, error) {
 	fbr, err := newFileBlockReader(r, password)
 	if err != nil {
