@@ -226,8 +226,16 @@ func (v *volume) nextVolName() {
 
 func (v *volume) next() (*fileBlockHeader, error) {
 	for {
+		var atEOF bool
+
 		h, err := v.fileBlockReader.next()
-		if err != errArchiveContinues {
+		switch err {
+		case errArchiveContinues:
+		case io.EOF:
+			// Read all of volume without finding an end block. The only way
+			// to tell if the archive continues is to try to open the next volume.
+			atEOF = true
+		default:
 			return h, err
 		}
 
@@ -235,6 +243,10 @@ func (v *volume) next() (*fileBlockHeader, error) {
 		v.nextVolName()
 		v.f, err = os.Open(v.dir + v.file) // Open next volume file
 		if err != nil {
+			if atEOF && os.IsNotExist(err) {
+				// volume not found so assume that the archive has ended
+				return nil, io.EOF
+			}
 			return nil, err
 		}
 		v.num++
