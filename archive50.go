@@ -447,7 +447,7 @@ func (a *archive50) next() (*fileBlockHeader, error) {
 		case block5End:
 			flags := h.data.uvarint()
 			if flags&endArc5NotLast == 0 || !a.multi {
-				return nil, io.EOF
+				return nil, errArchiveEnd
 			}
 			return nil, errArchiveContinues
 		default:

@@ -187,6 +187,9 @@ func (f *packedFileReader) next() (*fileBlockHeader, error) {
 	var err error
 	f.h, err = f.r.next() // get next file block
 	if err != nil {
+		if err == errArchiveEnd {
+			return nil, io.EOF
+		}
 		return nil, err
 	}
 	if !f.h.first {

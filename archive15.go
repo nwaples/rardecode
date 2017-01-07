@@ -440,7 +440,7 @@ func (a *archive15) next() (*fileBlockHeader, error) {
 			a.solid = h.flags&arcSolid > 0
 		case blockEnd:
 			if h.flags&endArcNotLast == 0 || !a.multi {
-				return nil, io.EOF
+				return nil, errArchiveEnd
 			}
 			return nil, errArchiveContinues
 		default:
