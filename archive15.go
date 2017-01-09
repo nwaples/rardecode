@@ -74,18 +74,18 @@ func (h *fileHash32) valid() bool {
 
 // archive15 implements fileBlockReader for RAR 1.5 file format archives
 type archive15 struct {
-	io.Reader               // reader for current block data
-	v         *bufio.Reader // reader for current archive volume
-	dec       decoder       // current decoder
-	decVer    byte          // current decoder version
-	multi     bool          // archive is multi-volume
-	old       bool          // archive uses old naming scheme
-	solid     bool          // archive is a solid archive
-	encrypted bool
-	pass      []uint16              // password in UTF-16
-	checksum  fileHash32            // file checksum
-	buf       readBuf               // temporary buffer
-	keyCache  [cacheSize30]struct { // cache of previously calculated decryption keys
+	byteReader               // reader for current block data
+	v          *bufio.Reader // reader for current archive volume
+	dec        decoder       // current decoder
+	decVer     byte          // current decoder version
+	multi      bool          // archive is multi-volume
+	old        bool          // archive uses old naming scheme
+	solid      bool          // archive is a solid archive
+	encrypted  bool
+	pass       []uint16              // password in UTF-16
+	checksum   fileHash32            // file checksum
+	buf        readBuf               // temporary buffer
+	keyCache   [cacheSize30]struct { // cache of previously calculated decryption keys
 		salt []byte
 		key  []byte
 		iv   []byte
@@ -417,9 +417,9 @@ func (a *archive15) readBlockHeader() (*blockHeader15, error) {
 
 // next advances to the next file block in the archive
 func (a *archive15) next() (*fileBlockHeader, error) {
-	if a.Reader != nil {
+	if a.byteReader != nil {
 		// discard remaining bytes left in current file block
-		if _, err := io.Copy(ioutil.Discard, a.Reader); err != nil {
+		if _, err := io.Copy(ioutil.Discard, a.byteReader); err != nil {
 			return nil, err
 		}
 	}
@@ -429,7 +429,7 @@ func (a *archive15) next() (*fileBlockHeader, error) {
 		if err != nil {
 			return nil, err
 		}
-		a.Reader = &limitedReader{a.v, h.dataSize, io.ErrUnexpectedEOF} // reader for block data
+		a.byteReader = limitByteReader(a.v, h.dataSize) // reader for block data
 
 		switch h.htype {
 		case blockFile:
@@ -445,7 +445,7 @@ func (a *archive15) next() (*fileBlockHeader, error) {
 			}
 			return nil, errArchiveContinues
 		default:
-			_, err = io.Copy(ioutil.Discard, a.Reader)
+			_, err = io.Copy(ioutil.Discard, a.byteReader)
 		}
 		if err != nil {
 			return nil, err

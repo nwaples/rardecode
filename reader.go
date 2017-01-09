@@ -167,6 +167,7 @@ type fileBlockHeader struct {
 // fileBlockReader provides sequential access to file blocks in a RAR archive.
 type fileBlockReader interface {
 	io.Reader                        // Read's read data from the current file block
+	io.ByteReader                    // Read bytes from current file block
 	next() (*fileBlockHeader, error) // advances to the next file block
 	reset()                          // resets encryption
 	isSolid() bool                   // is archive solid
