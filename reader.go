@@ -241,6 +241,17 @@ func (f *packedFileReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+func (f *packedFileReader) ReadByte() (byte, error) {
+	c, err := f.r.ReadByte()                       // read current block data
+	for err == io.EOF && f.h != nil && !f.h.last { // current block empty
+		if err := f.nextBlockInFile(); err != nil {
+			return 0, err
+		}
+		c, err = f.r.ReadByte() // read new block data
+	}
+	return c, err
+}
+
 // Reader provides sequential access to files in a RAR archive.
 type Reader struct {
 	r      io.Reader        // reader for current unpacked file
@@ -274,15 +285,16 @@ func (r *Reader) Next() (*FileHeader, error) {
 	}
 	r.solidr = nil
 
-	r.r = io.Reader(&r.pr) // start with packed file reader
+	br := byteReader(&r.pr) // start with packed file reader
 
 	// check for encryption
 	if len(h.key) > 0 && len(h.iv) > 0 {
-		r.r = newAesDecryptReader(r.r, h.key, h.iv) // decrypt
+		br = newAesDecryptReader(br, h.key, h.iv) // decrypt
 	}
+	r.r = br
 	// check for compression
 	if h.decoder != nil {
-		err = r.dr.init(r.r, h.decoder, h.winSize, !h.solid)
+		err = r.dr.init(br, h.decoder, h.winSize, !h.solid)
 		if err != nil {
 			return nil, err
 		}
