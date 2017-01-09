@@ -1,6 +1,7 @@
 package rardecode
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha1"
 	"errors"
@@ -73,13 +74,13 @@ func (h *fileHash32) valid() bool {
 
 // archive15 implements fileBlockReader for RAR 1.5 file format archives
 type archive15 struct {
-	r         io.Reader // reader for current block data
-	v         io.Reader // reader for current archive volume
-	dec       decoder   // current decoder
-	decVer    byte      // current decoder version
-	multi     bool      // archive is multi-volume
-	old       bool      // archive uses old naming scheme
-	solid     bool      // archive is a solid archive
+	r         io.Reader     // reader for current block data
+	v         *bufio.Reader // reader for current archive volume
+	dec       decoder       // current decoder
+	decVer    byte          // current decoder version
+	multi     bool          // archive is multi-volume
+	old       bool          // archive uses old naming scheme
+	solid     bool          // archive is a solid archive
 	encrypted bool
 	pass      []uint16              // password in UTF-16
 	checksum  fileHash32            // file checksum
@@ -359,7 +360,7 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 func (a *archive15) readBlockHeader() (*blockHeader15, error) {
 	var err error
 	b := a.buf[:7]
-	r := a.v
+	r := io.Reader(a.v)
 	if a.encrypted {
 		salt := a.buf[:saltSize]
 		_, err = io.ReadFull(r, salt)
@@ -454,9 +455,8 @@ func (a *archive15) next() (*fileBlockHeader, error) {
 
 func (a *archive15) version() int { return fileFmt15 }
 
-func (a *archive15) reset(r io.Reader) {
+func (a *archive15) reset() {
 	a.encrypted = false // reset encryption when opening new volume file
-	a.v = r
 }
 
 func (a *archive15) isSolid() bool {
@@ -469,7 +469,7 @@ func (a *archive15) Read(p []byte) (int, error) {
 }
 
 // newArchive15 creates a new fileBlockReader for a Version 1.5 archive
-func newArchive15(r io.Reader, password string) fileBlockReader {
+func newArchive15(r *bufio.Reader, password string) fileBlockReader {
 	a := new(archive15)
 	a.v = r
 	a.pass = utf16.Encode([]rune(password)) // convert to UTF-16

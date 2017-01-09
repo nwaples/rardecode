@@ -145,7 +145,7 @@ type fileBlockHeader struct {
 type fileBlockReader interface {
 	io.Reader                        // Read's read data from the current file block
 	next() (*fileBlockHeader, error) // advances to the next file block
-	reset(r io.Reader)               // resets for new volume file
+	reset()                          // resets encryption
 	isSolid() bool                   // is archive solid
 	version() int                    // returns current archive format version
 }

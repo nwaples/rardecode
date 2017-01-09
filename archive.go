@@ -258,7 +258,7 @@ func (v *volume) next() (*fileBlockHeader, error) {
 		if v.version() != ver {
 			return nil, errVerMismatch
 		}
-		v.reset(v.br) // reset fileBlockReader to use new file
+		v.reset() // reset encryption
 	}
 }
 
