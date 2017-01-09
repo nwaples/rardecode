@@ -435,7 +435,7 @@ func (a *archive50) next() (*fileBlockHeader, error) {
 		if err != nil {
 			return nil, err
 		}
-		a.Reader = limitReader(a.v, h.dataSize, io.ErrUnexpectedEOF)
+		a.Reader = &limitedReader{a.v, h.dataSize, io.ErrUnexpectedEOF}
 		switch h.htype {
 		case block5File:
 			return a.parseFileHeader(h)

@@ -32,6 +32,11 @@ var (
 	errBadFileChecksum  = errors.New("rardecode: bad file checksum")
 )
 
+type byteReader interface {
+	io.Reader
+	io.ByteReader
+}
+
 type limitedReader struct {
 	r        io.Reader
 	n        int64 // bytes remaining
@@ -53,11 +58,29 @@ func (l *limitedReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// limitReader returns an io.Reader that reads from r and stops with
+type limitedByteReader struct {
+	limitedReader
+	br io.ByteReader
+}
+
+func (l *limitedByteReader) ReadByte() (byte, error) {
+	if l.n <= 0 {
+		return 0, io.EOF
+	}
+	c, err := l.br.ReadByte()
+	if err == nil {
+		l.n--
+	} else if err == io.EOF && l.n > 0 {
+		return 0, l.shortErr
+	}
+	return c, err
+}
+
+// limitByteReader returns a limitedByteReader that reads from r and stops with
 // io.EOF after n bytes.
-// If r returns an io.EOF before reading n bytes, err is returned.
-func limitReader(r io.Reader, n int64, err error) io.Reader {
-	return &limitedReader{r, n, err}
+// If r returns an io.EOF before reading n bytes, io.ErrUnexpectedEOF is returned.
+func limitByteReader(r byteReader, n int64) *limitedByteReader {
+	return &limitedByteReader{limitedReader{r, n, io.ErrUnexpectedEOF}, r}
 }
 
 // fileChecksum allows file checksum validations to be performed.
@@ -269,7 +292,7 @@ func (r *Reader) Next() (*FileHeader, error) {
 	}
 	if h.UnPackedSize >= 0 && !h.UnKnownSize {
 		// Limit reading to UnPackedSize as there may be padding
-		r.r = limitReader(r.r, h.UnPackedSize, errShortFile)
+		r.r = &limitedReader{r.r, h.UnPackedSize, errShortFile}
 	}
 	r.cksum = h.cksum
 	if r.cksum != nil {

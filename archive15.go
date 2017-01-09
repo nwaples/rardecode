@@ -429,7 +429,7 @@ func (a *archive15) next() (*fileBlockHeader, error) {
 		if err != nil {
 			return nil, err
 		}
-		a.Reader = limitReader(a.v, h.dataSize, io.ErrUnexpectedEOF) // reader for block data
+		a.Reader = &limitedReader{a.v, h.dataSize, io.ErrUnexpectedEOF} // reader for block data
 
 		switch h.htype {
 		case blockFile:
