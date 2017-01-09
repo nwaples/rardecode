@@ -115,16 +115,16 @@ func (h *hash50) valid() bool {
 
 // archive50 implements fileBlockReader for RAR 5 file format archives
 type archive50 struct {
-	r        io.Reader     // reader for current block data
-	v        *bufio.Reader // reader for current archive volume
-	pass     []byte
-	blockKey []byte                // key used to encrypt blocks
-	multi    bool                  // archive is multi-volume
-	solid    bool                  // is a solid archive
-	checksum hash50                // file checksum
-	dec      decoder               // optional decoder used to unpack file
-	buf      readBuf               // temporary buffer
-	keyCache [cacheSize50]struct { // encryption key cache
+	io.Reader               // reader for current block data
+	v         *bufio.Reader // reader for current archive volume
+	pass      []byte
+	blockKey  []byte                // key used to encrypt blocks
+	multi     bool                  // archive is multi-volume
+	solid     bool                  // is a solid archive
+	checksum  hash50                // file checksum
+	dec       decoder               // optional decoder used to unpack file
+	buf       readBuf               // temporary buffer
+	keyCache  [cacheSize50]struct { // encryption key cache
 		kdfCount int
 		salt     []byte
 		keys     [][]byte
@@ -424,9 +424,9 @@ func (a *archive50) readBlockHeader() (*blockHeader50, error) {
 
 // next advances to the next file block in the archive
 func (a *archive50) next() (*fileBlockHeader, error) {
-	if a.r != nil {
+	if a.Reader != nil {
 		// discard current block data
-		if _, err := io.Copy(ioutil.Discard, a.r); err != nil {
+		if _, err := io.Copy(ioutil.Discard, a.Reader); err != nil {
 			return nil, err
 		}
 	}
@@ -435,7 +435,7 @@ func (a *archive50) next() (*fileBlockHeader, error) {
 		if err != nil {
 			return nil, err
 		}
-		a.r = limitReader(a.v, h.dataSize, io.ErrUnexpectedEOF)
+		a.Reader = limitReader(a.v, h.dataSize, io.ErrUnexpectedEOF)
 		switch h.htype {
 		case block5File:
 			return a.parseFileHeader(h)
@@ -453,7 +453,7 @@ func (a *archive50) next() (*fileBlockHeader, error) {
 			return nil, errArchiveContinues
 		default:
 			// discard block data
-			_, err = io.Copy(ioutil.Discard, a.r)
+			_, err = io.Copy(ioutil.Discard, a.Reader)
 		}
 		if err != nil {
 			return nil, err
@@ -469,11 +469,6 @@ func (a *archive50) reset() {
 
 func (a *archive50) isSolid() bool {
 	return a.solid
-}
-
-// Read reads bytes from the current file block into p.
-func (a *archive50) Read(p []byte) (int, error) {
-	return a.r.Read(p)
 }
 
 // newArchive50 creates a new fileBlockReader for a Version 5 archive.

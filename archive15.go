@@ -74,7 +74,7 @@ func (h *fileHash32) valid() bool {
 
 // archive15 implements fileBlockReader for RAR 1.5 file format archives
 type archive15 struct {
-	r         io.Reader     // reader for current block data
+	io.Reader               // reader for current block data
 	v         *bufio.Reader // reader for current archive volume
 	dec       decoder       // current decoder
 	decVer    byte          // current decoder version
@@ -417,9 +417,9 @@ func (a *archive15) readBlockHeader() (*blockHeader15, error) {
 
 // next advances to the next file block in the archive
 func (a *archive15) next() (*fileBlockHeader, error) {
-	if a.r != nil {
+	if a.Reader != nil {
 		// discard remaining bytes left in current file block
-		if _, err := io.Copy(ioutil.Discard, a.r); err != nil {
+		if _, err := io.Copy(ioutil.Discard, a.Reader); err != nil {
 			return nil, err
 		}
 	}
@@ -429,7 +429,7 @@ func (a *archive15) next() (*fileBlockHeader, error) {
 		if err != nil {
 			return nil, err
 		}
-		a.r = limitReader(a.v, h.dataSize, io.ErrUnexpectedEOF) // reader for block data
+		a.Reader = limitReader(a.v, h.dataSize, io.ErrUnexpectedEOF) // reader for block data
 
 		switch h.htype {
 		case blockFile:
@@ -445,7 +445,7 @@ func (a *archive15) next() (*fileBlockHeader, error) {
 			}
 			return nil, errArchiveContinues
 		default:
-			_, err = io.Copy(ioutil.Discard, a.r)
+			_, err = io.Copy(ioutil.Discard, a.Reader)
 		}
 		if err != nil {
 			return nil, err
@@ -461,11 +461,6 @@ func (a *archive15) reset() {
 
 func (a *archive15) isSolid() bool {
 	return a.solid
-}
-
-// Read reads bytes from the current file block into p.
-func (a *archive15) Read(p []byte) (int, error) {
-	return a.r.Read(p)
 }
 
 // newArchive15 creates a new fileBlockReader for a Version 1.5 archive
