@@ -287,11 +287,7 @@ func openVolume(name, password string) (*volume, error) {
 	return v, nil
 }
 
-func newFileBlockReader(r io.Reader, pass string) (fileBlockReader, error) {
-	br, ok := r.(*bufio.Reader)
-	if !ok {
-		br = bufio.NewReader(r)
-	}
+func newFileBlockReader(br *bufio.Reader, pass string) (fileBlockReader, error) {
 	runes := []rune(pass)
 	if len(runes) > maxPassword {
 		pass = string(runes[:maxPassword])

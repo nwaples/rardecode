@@ -1,6 +1,7 @@
 package rardecode
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"io"
@@ -288,7 +289,11 @@ func (r *Reader) init(fbr fileBlockReader) {
 // NewReader only supports single volume archives.
 // Multi-volume archives must use OpenReader.
 func NewReader(r io.Reader, password string) (*Reader, error) {
-	fbr, err := newFileBlockReader(r, password)
+	br, ok := r.(*bufio.Reader)
+	if !ok {
+		br = bufio.NewReader(r)
+	}
+	fbr, err := newFileBlockReader(br, password)
 	if err != nil {
 		return nil, err
 	}
