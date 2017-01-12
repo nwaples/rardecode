@@ -417,12 +417,6 @@ func (a *archive15) readBlockHeader() (*blockHeader15, error) {
 
 // next advances to the next file block in the archive
 func (a *archive15) next() (*fileBlockHeader, error) {
-	if a.byteReader != nil {
-		// discard remaining bytes left in current file block
-		if _, err := io.Copy(ioutil.Discard, a.byteReader); err != nil {
-			return nil, err
-		}
-	}
 	for {
 		// could return an io.EOF here as 1.5 archives may not have an end block.
 		h, err := a.readBlockHeader()

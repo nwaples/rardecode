@@ -424,12 +424,6 @@ func (a *archive50) readBlockHeader() (*blockHeader50, error) {
 
 // next advances to the next file block in the archive
 func (a *archive50) next() (*fileBlockHeader, error) {
-	if a.byteReader != nil {
-		// discard current block data
-		if _, err := io.Copy(ioutil.Discard, a.byteReader); err != nil {
-			return nil, err
-		}
-	}
 	for {
 		h, err := a.readBlockHeader()
 		if err != nil {

@@ -168,7 +168,7 @@ type fileBlockHeader struct {
 type fileBlockReader interface {
 	io.Reader                        // Read's read data from the current file block
 	io.ByteReader                    // Read bytes from current file block
-	next() (*fileBlockHeader, error) // advances to the next file block
+	next() (*fileBlockHeader, error) // reads the next file block header at current position
 	reset()                          // resets encryption
 	isSolid() bool                   // is archive solid
 	version() int                    // returns current archive format version
@@ -180,8 +180,8 @@ type packedFileReader struct {
 	h *fileBlockHeader // current file header
 }
 
-// nextBlockInFile advances to the next file block in the current file, or returns
-// an error if there is a problem.
+// nextBlockInFile reads the next file block in the current file at the current
+// archive file position, or returns an error if there is a problem.
 // It is invalid to call this when already at the last block in the current file.
 func (f *packedFileReader) nextBlockInFile() error {
 	h, err := f.r.next()
@@ -204,9 +204,17 @@ func (f *packedFileReader) next() (*fileBlockHeader, error) {
 	if f.h != nil {
 		// skip to last block in current file
 		for !f.h.last {
+			// discard remaining block data
+			if _, err := io.Copy(ioutil.Discard, f.r); err != nil {
+				return nil, err
+			}
 			if err := f.nextBlockInFile(); err != nil {
 				return nil, err
 			}
+		}
+		// discard last block data
+		if _, err := io.Copy(ioutil.Discard, f.r); err != nil {
+			return nil, err
 		}
 	}
 	var err error
