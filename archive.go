@@ -225,6 +225,9 @@ func (v *volume) nextVolName() {
 }
 
 func (v *volume) next() (*fileBlockHeader, error) {
+	if len(v.file) == 0 {
+		return v.fileBlockReader.next()
+	}
 	for {
 		var atEOF bool
 

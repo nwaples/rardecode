@@ -371,8 +371,9 @@ func NewReader(r io.Reader, password string) (*Reader, error) {
 	if err != nil {
 		return nil, err
 	}
+	v := &volume{fileBlockReader: fbr, br: br}
 	rr := new(Reader)
-	rr.init(fbr)
+	rr.init(v)
 	return rr, nil
 }
 
