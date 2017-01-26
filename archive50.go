@@ -122,7 +122,6 @@ type archive50 struct {
 	multi      bool                  // archive is multi-volume
 	solid      bool                  // is a solid archive
 	checksum   hash50                // file checksum
-	dec        decoder               // optional decoder used to unpack file
 	buf        readBuf               // temporary buffer
 	keyCache   [cacheSize50]struct { // encryption key cache
 		kdfCount int
@@ -291,10 +290,7 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 		if unpackver != 0 {
 			return nil, errUnknownDecoder
 		}
-		if a.dec == nil {
-			a.dec = new(decoder50)
-		}
-		f.decoder = a.dec
+		f.decVer = decode50Ver
 	}
 	switch h.data.uvarint() {
 	case 0:

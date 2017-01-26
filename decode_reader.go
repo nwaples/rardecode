@@ -31,6 +31,7 @@ type filterBlock struct {
 type decoder interface {
 	init(r io.ByteReader, reset bool) error // initialize decoder for current file
 	fill(w *window) ([]*filterBlock, error) // fill window with decoded data, returning any filters
+	version() int                           // decoder version
 }
 
 // window is a sliding window buffer.

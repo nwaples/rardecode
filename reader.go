@@ -23,6 +23,10 @@ const (
 
 const (
 	maxPassword = 128
+
+	decodeNoneVer = iota
+	decode29Ver
+	decode50Ver
 )
 
 var (
@@ -158,7 +162,7 @@ type fileBlockHeader struct {
 	solid   bool         // file is solid
 	winSize uint         // log base 2 of decode window size
 	cksum   fileChecksum // file checksum
-	decoder decoder      // decoder to use for file
+	decVer  int          // decoder to use for file
 	key     []byte       // key for AES, non-empty if file encrypted
 	iv      []byte       // iv for AES, non-empty if file encrypted
 	FileHeader
@@ -264,6 +268,7 @@ func (f *packedFileReader) ReadByte() (byte, error) {
 type Reader struct {
 	r      io.Reader        // reader for current unpacked file
 	pr     packedFileReader // reader for current packed file
+	d      decoder          // current decoder
 	dr     decodeReader     // reader for decoding and filters if file is compressed
 	cksum  fileChecksum     // current file checksum
 	solidr io.Reader        // reader for solid file
@@ -301,8 +306,20 @@ func (r *Reader) Next() (*FileHeader, error) {
 	}
 	r.r = br
 	// check for compression
-	if h.decoder != nil {
-		err = r.dr.init(br, h.decoder, h.winSize, !h.solid)
+	if h.decVer > 0 {
+		if r.d == nil {
+			switch h.decVer {
+			case decode29Ver:
+				r.d = new(decoder29)
+			case decode50Ver:
+				r.d = new(decoder50)
+			default:
+				return nil, errUnknownDecoder
+			}
+		} else if r.d.version() != h.decVer {
+			return nil, errMultipleDecoders
+		}
+		err = r.dr.init(br, r.d, h.winSize, !h.solid)
 		if err != nil {
 			return nil, err
 		}

@@ -76,8 +76,6 @@ func (h *fileHash32) valid() bool {
 type archive15 struct {
 	byteReader               // reader for current block data
 	v          *bufio.Reader // reader for current archive volume
-	dec        decoder       // current decoder
-	decVer     byte          // current decoder version
 	multi      bool          // archive is multi-volume
 	old        bool          // archive uses old naming scheme
 	solid      bool          // archive is a solid archive
@@ -335,23 +333,16 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 	}
 	a.checksum.Reset()
 	f.cksum = &a.checksum
-	if method == 0 {
-		return f, nil
-	}
-	if a.dec == nil {
+	if method != 0 {
 		switch unpackver {
 		case 15, 20, 26:
 			return nil, errUnsupportedDecoder
 		case 29:
-			a.dec = new(decoder29)
+			f.decVer = decode29Ver
 		default:
 			return nil, errUnknownDecoder
 		}
-		a.decVer = unpackver
-	} else if a.decVer != unpackver {
-		return nil, errMultipleDecoders
 	}
-	f.decoder = a.dec
 	return f, nil
 }
 

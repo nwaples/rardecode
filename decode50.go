@@ -38,6 +38,8 @@ type decoder50 struct {
 	length int
 }
 
+func (d *decoder50) version() int { return decode50Ver }
+
 func (d *decoder50) init(r io.ByteReader, reset bool) error {
 	d.r = r
 	d.lastBlock = false
