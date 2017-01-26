@@ -89,30 +89,6 @@ func newLittleEndianCRC32() hash.Hash32 {
 	return leHash32{crc32.NewIEEE()}
 }
 
-// hash50 implements fileChecksum for RAR 5 archives
-type hash50 struct {
-	hash.Hash        // hash file data is written to
-	sum       []byte // file checksum
-	key       []byte // if present used with hmac in calculating checksum from hash
-}
-
-func (h *hash50) valid() bool {
-	sum := h.Sum(nil)
-	if len(h.key) > 0 {
-		mac := hmac.New(sha256.New, h.key)
-		mac.Write(sum)
-		sum = mac.Sum(sum[:0])
-		if len(h.sum) == 4 {
-			// CRC32
-			for i, v := range sum[4:] {
-				sum[i&3] ^= v
-			}
-			sum = sum[:4]
-		}
-	}
-	return bytes.Equal(sum, h.sum)
-}
-
 // archive50 implements fileBlockReader for RAR 5 file format archives
 type archive50 struct {
 	byteReader               // reader for current block data
@@ -121,7 +97,6 @@ type archive50 struct {
 	blockKey   []byte                // key used to encrypt blocks
 	multi      bool                  // archive is multi-volume
 	solid      bool                  // is a solid archive
-	checksum   hash50                // file checksum
 	buf        readBuf               // temporary buffer
 	keyCache   [cacheSize50]struct { // encryption key cache
 		kdfCount int
@@ -244,15 +219,12 @@ func (a *archive50) parseFileEncryptionRecord(b readBuf, f *fileBlockHeader) err
 		}
 	}
 	if flags&file5EncUseMac > 0 {
-		a.checksum.key = keys[1]
+		f.hashKey = keys[1]
 	}
 	return nil
 }
 
 func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) {
-	a.checksum.sum = nil
-	a.checksum.key = nil
-
 	f := new(fileBlockHeader)
 
 	f.first = h.flags&block5DataNotFirst == 0
@@ -274,10 +246,9 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 		if len(h.data) < 4 {
 			return nil, errCorruptFileHeader
 		}
-		a.checksum.sum = append([]byte(nil), h.data.bytes(4)...)
+		f.sum = append([]byte(nil), h.data.bytes(4)...)
 		if f.first {
-			a.checksum.Hash = newLittleEndianCRC32()
-			f.cksum = &a.checksum
+			f.hash = newLittleEndianCRC32()
 		}
 	}
 

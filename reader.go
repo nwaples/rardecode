@@ -3,7 +3,10 @@ package rardecode
 import (
 	"bufio"
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
 	"errors"
+	"hash"
 	"io"
 	"io/ioutil"
 	"os"
@@ -87,15 +90,6 @@ func limitByteReader(r byteReader, n int64) *limitedByteReader {
 	return &limitedByteReader{limitedReader{r, n, io.ErrUnexpectedEOF}, r}
 }
 
-// fileChecksum allows file checksum validations to be performed.
-// File contents must first be written to fileChecksum. Then valid is
-// called to perform the file checksum calculation to determine
-// if the file contents are valid or not.
-type fileChecksum interface {
-	io.Writer
-	valid() bool
-}
-
 // FileHeader represents a single file in a RAR archive.
 type FileHeader struct {
 	Name             string    // file name using '/' as the directory separator
@@ -157,14 +151,16 @@ func (f *FileHeader) Mode() os.FileMode {
 // Files may comprise one or more file blocks.
 // Solid files retain decode tables and dictionary from previous solid files in the archive.
 type fileBlockHeader struct {
-	first   bool         // first block in file
-	last    bool         // last block in file
-	solid   bool         // file is solid
-	winSize uint         // log base 2 of decode window size
-	cksum   fileChecksum // file checksum
-	decVer  int          // decoder to use for file
-	key     []byte       // key for AES, non-empty if file encrypted
-	iv      []byte       // iv for AES, non-empty if file encrypted
+	first   bool      // first block in file
+	last    bool      // last block in file
+	solid   bool      // file is solid
+	winSize uint      // log base 2 of decode window size
+	hash    hash.Hash // hash used for file checksum
+	hashKey []byte    // optional hmac key to be used calculate file checksum
+	sum     []byte    // expected checksum for file contents
+	decVer  int       // decoder to use for file
+	key     []byte    // key for AES, non-empty if file encrypted
+	iv      []byte    // iv for AES, non-empty if file encrypted
 	FileHeader
 }
 
@@ -270,15 +266,32 @@ type Reader struct {
 	pr     packedFileReader // reader for current packed file
 	d      decoder          // current decoder
 	dr     decodeReader     // reader for decoding and filters if file is compressed
-	cksum  fileChecksum     // current file checksum
+	hash   hash.Hash        // current file hash
 	solidr io.Reader        // reader for solid file
 }
 
 // Read reads from the current file in the RAR archive.
 func (r *Reader) Read(p []byte) (int, error) {
 	n, err := r.r.Read(p)
-	if err == io.EOF && r.cksum != nil && !r.cksum.valid() {
-		return n, errBadFileChecksum
+	if err == io.EOF && r.hash != nil {
+		// calculate file checksum
+		h := r.pr.h
+		sum := r.hash.Sum(nil)
+		if len(h.hashKey) > 0 {
+			mac := hmac.New(sha256.New, h.hashKey)
+			mac.Write(sum)
+			sum = mac.Sum(sum[:0])
+			if len(h.sum) == 4 {
+				// CRC32
+				for i, v := range sum[4:] {
+					sum[i&3] ^= v
+				}
+				sum = sum[:4]
+			}
+		}
+		if !bytes.Equal(sum, h.sum) {
+			return n, errBadFileChecksum
+		}
 	}
 	return n, err
 }
@@ -332,9 +345,9 @@ func (r *Reader) Next() (*FileHeader, error) {
 		// Limit reading to UnPackedSize as there may be padding
 		r.r = &limitedReader{r.r, h.UnPackedSize, errShortFile}
 	}
-	r.cksum = h.cksum
-	if r.cksum != nil {
-		r.r = io.TeeReader(r.r, h.cksum) // write file data to checksum as it is read
+	r.hash = h.hash
+	if r.hash != nil {
+		r.r = io.TeeReader(r.r, r.hash) // write file data to checksum as it is read
 	}
 	fh := new(FileHeader)
 	*fh = h.FileHeader

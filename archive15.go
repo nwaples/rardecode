@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"errors"
-	"hash"
 	"hash/crc32"
 	"io"
 	"io/ioutil"
@@ -62,16 +61,6 @@ type blockHeader15 struct {
 	dataSize int64   // size of extra block data
 }
 
-// fileHash32 implements fileChecksum for 32-bit hashes
-type fileHash32 struct {
-	hash.Hash32        // hash to write file contents to
-	sum         uint32 // 32bit checksum for file
-}
-
-func (h *fileHash32) valid() bool {
-	return h.sum == h.Sum32()
-}
-
 // archive15 implements fileBlockReader for RAR 1.5 file format archives
 type archive15 struct {
 	byteReader               // reader for current block data
@@ -81,7 +70,6 @@ type archive15 struct {
 	solid      bool          // archive is a solid archive
 	encrypted  bool
 	pass       []uint16              // password in UTF-16
-	checksum   fileHash32            // file checksum
 	buf        readBuf               // temporary buffer
 	keyCache   [cacheSize30]struct { // cache of previously calculated decryption keys
 		salt []byte
@@ -271,7 +259,7 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 	if f.HostOS > HostOSBeOS {
 		f.HostOS = HostOSUnknown
 	}
-	a.checksum.sum = b.uint32()
+	f.sum = append([]byte(nil), b.bytes(4)...)
 
 	f.ModificationTime = parseDosTime(b.uint32())
 	unpackver := b.byte()     // decoder version
@@ -331,8 +319,7 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 	if h.flags&fileEncrypted > 0 && len(salt) == saltSize {
 		f.key, f.iv = a.getKeys(salt)
 	}
-	a.checksum.Reset()
-	f.cksum = &a.checksum
+	f.hash = newLittleEndianCRC32()
 	if method != 0 {
 		switch unpackver {
 		case 15, 20, 26:
@@ -453,7 +440,6 @@ func newArchive15(r *bufio.Reader, password string) fileBlockReader {
 	a := new(archive15)
 	a.v = r
 	a.pass = utf16.Encode([]rune(password)) // convert to UTF-16
-	a.checksum.Hash32 = crc32.NewIEEE()
 	a.buf = readBuf(make([]byte, 100))
 	return a
 }
