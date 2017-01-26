@@ -91,8 +91,7 @@ func newLittleEndianCRC32() hash.Hash32 {
 
 // archive50 implements fileBlockReader for RAR 5 file format archives
 type archive50 struct {
-	byteReader               // reader for current block data
-	v          *bufio.Reader // reader for current archive volume
+	byteReader // reader for current block data
 	pass       []byte
 	blockKey   []byte                // key used to encrypt blocks
 	multi      bool                  // archive is multi-volume
@@ -321,8 +320,7 @@ func (a *archive50) parseEncryptionBlock(b readBuf) error {
 	return nil
 }
 
-func (a *archive50) readBlockHeader() (*blockHeader50, error) {
-	r := io.Reader(a.v)
+func (a *archive50) readBlockHeader(r io.Reader) (*blockHeader50, error) {
 	if a.blockKey != nil {
 		// block is encrypted
 		iv := a.buf[:16]
@@ -390,13 +388,13 @@ func (a *archive50) readBlockHeader() (*blockHeader50, error) {
 }
 
 // next advances to the next file block in the archive
-func (a *archive50) next() (*fileBlockHeader, error) {
+func (a *archive50) next(br *bufio.Reader) (*fileBlockHeader, error) {
 	for {
-		h, err := a.readBlockHeader()
+		h, err := a.readBlockHeader(br)
 		if err != nil {
 			return nil, err
 		}
-		a.byteReader = limitByteReader(a.v, h.dataSize)
+		a.byteReader = limitByteReader(br, h.dataSize)
 		switch h.htype {
 		case block5File:
 			return a.parseFileHeader(h)
@@ -435,7 +433,6 @@ func (a *archive50) isSolid() bool {
 // newArchive50 creates a new fileBlockReader for a Version 5 archive.
 func newArchive50(r *bufio.Reader, password string) fileBlockReader {
 	a := new(archive50)
-	a.v = r
 	a.pass = []byte(password)
 	a.buf = make([]byte, 100)
 	return a

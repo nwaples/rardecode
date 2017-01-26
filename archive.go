@@ -226,12 +226,12 @@ func (v *volume) nextVolName() {
 
 func (v *volume) next() (*fileBlockHeader, error) {
 	if len(v.file) == 0 {
-		return v.fileBlockReader.next()
+		return v.fileBlockReader.next(v.br)
 	}
 	for {
 		var atEOF bool
 
-		h, err := v.fileBlockReader.next()
+		h, err := v.fileBlockReader.next(v.br)
 		switch err {
 		case errArchiveContinues:
 		case io.EOF:

@@ -63,11 +63,10 @@ type blockHeader15 struct {
 
 // archive15 implements fileBlockReader for RAR 1.5 file format archives
 type archive15 struct {
-	byteReader               // reader for current block data
-	v          *bufio.Reader // reader for current archive volume
-	multi      bool          // archive is multi-volume
-	old        bool          // archive uses old naming scheme
-	solid      bool          // archive is a solid archive
+	byteReader      // reader for current block data
+	multi      bool // archive is multi-volume
+	old        bool // archive uses old naming scheme
+	solid      bool // archive is a solid archive
 	encrypted  bool
 	pass       []uint16              // password in UTF-16
 	buf        readBuf               // temporary buffer
@@ -335,10 +334,9 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 
 // readBlockHeader returns the next block header in the archive.
 // It will return io.EOF if there were no bytes read.
-func (a *archive15) readBlockHeader() (*blockHeader15, error) {
+func (a *archive15) readBlockHeader(r io.Reader) (*blockHeader15, error) {
 	var err error
 	b := a.buf[:7]
-	r := io.Reader(a.v)
 	if a.encrypted {
 		salt := a.buf[:saltSize]
 		_, err = io.ReadFull(r, salt)
@@ -394,14 +392,14 @@ func (a *archive15) readBlockHeader() (*blockHeader15, error) {
 }
 
 // next advances to the next file block in the archive
-func (a *archive15) next() (*fileBlockHeader, error) {
+func (a *archive15) next(br *bufio.Reader) (*fileBlockHeader, error) {
 	for {
 		// could return an io.EOF here as 1.5 archives may not have an end block.
-		h, err := a.readBlockHeader()
+		h, err := a.readBlockHeader(br)
 		if err != nil {
 			return nil, err
 		}
-		a.byteReader = limitByteReader(a.v, h.dataSize) // reader for block data
+		a.byteReader = limitByteReader(br, h.dataSize) // reader for block data
 
 		switch h.htype {
 		case blockFile:
@@ -438,7 +436,6 @@ func (a *archive15) isSolid() bool {
 // newArchive15 creates a new fileBlockReader for a Version 1.5 archive
 func newArchive15(r *bufio.Reader, password string) fileBlockReader {
 	a := new(archive15)
-	a.v = r
 	a.pass = utf16.Encode([]rune(password)) // convert to UTF-16
 	a.buf = readBuf(make([]byte, 100))
 	return a
