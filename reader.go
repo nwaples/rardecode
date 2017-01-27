@@ -275,6 +275,9 @@ type Reader struct {
 
 // Read reads from the current file in the RAR archive.
 func (r *Reader) Read(p []byte) (int, error) {
+	if r.r == nil {
+		return 0, io.EOF
+	}
 	n, err := r.r.Read(p)
 	if err == io.EOF && r.hash != nil {
 		// calculate file checksum
@@ -352,11 +355,6 @@ func (r *Reader) Next() (*FileHeader, error) {
 	return fh, nil
 }
 
-func (r *Reader) init(v *volume) {
-	r.r = bytes.NewReader(nil) // initial reads will always return EOF
-	r.v = v
-}
-
 // NewReader creates a Reader reading from r.
 // NewReader only supports single volume archives.
 // Multi-volume archives must use OpenReader.
@@ -370,13 +368,10 @@ func NewReader(r io.Reader, password string) (*Reader, error) {
 		return nil, err
 	}
 	v := &volume{fbr: fbr, br: br}
-	rr := new(Reader)
-	rr.init(v)
-	return rr, nil
+	return &Reader{v: v}, nil
 }
 
 type ReadCloser struct {
-	v *volume
 	Reader
 }
 
@@ -391,8 +386,6 @@ func OpenReader(name, password string) (*ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	rc := new(ReadCloser)
-	rc.v = v
-	rc.Reader.init(v)
+	rc := &ReadCloser{Reader{v: v}}
 	return rc, nil
 }
