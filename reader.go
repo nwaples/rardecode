@@ -201,36 +201,23 @@ func (f *packedFileReader) nextBlockInFile() error {
 	return nil
 }
 
-// next advances to the next packed file in the RAR archive.
-func (f *packedFileReader) next() (*fileBlockHeader, error) {
-	if f.h != nil {
-		// skip to last block in current file
-		for !f.h.last {
-			// discard remaining block data
-			if err := f.r.skip(); err != nil {
-				return nil, err
-			}
-			if err := f.nextBlockInFile(); err != nil {
-				return nil, err
-			}
-		}
-		// discard last block data
+// skip advances to the end of the packed file in the RAR archive.
+func (f *packedFileReader) skip() error {
+	if f.h == nil {
+		return nil
+	}
+	// skip to last block in current file
+	for !f.h.last {
+		// discard remaining block data
 		if err := f.r.skip(); err != nil {
-			return nil, err
+			return err
+		}
+		if err := f.nextBlockInFile(); err != nil {
+			return err
 		}
 	}
-	var err error
-	f.h, err = f.r.next() // get next file block
-	if err != nil {
-		if err == errArchiveEnd {
-			return nil, io.EOF
-		}
-		return nil, err
-	}
-	if !f.h.first {
-		return nil, errInvalidFileBlock
-	}
-	return f.h, nil
+	// discard last block data
+	return f.r.skip()
 }
 
 // Read reads the packed data for the current file into p.
@@ -262,13 +249,28 @@ func (f *packedFileReader) ReadByte() (byte, error) {
 	return c, err
 }
 
+func newPackedFileReader(v *volume) (*packedFileReader, error) {
+	h, err := v.next() // get next file block
+	if err != nil {
+		if err == errArchiveEnd {
+			return nil, io.EOF
+		}
+		return nil, err
+	}
+	if !h.first {
+		return nil, errInvalidFileBlock
+	}
+	return &packedFileReader{v, h}, nil
+}
+
 // Reader provides sequential access to files in a RAR archive.
 type Reader struct {
-	r      io.Reader        // reader for current unpacked file
-	pr     packedFileReader // reader for current packed file
-	dr     decodeReader     // reader for decoding and filters if file is compressed
-	hash   hash.Hash        // current file hash
-	solidr io.Reader        // reader for solid file
+	r      io.Reader // reader for current unpacked file
+	v      *volume
+	pr     *packedFileReader // reader for current packed file
+	dr     decodeReader      // reader for decoding and filters if file is compressed
+	hash   hash.Hash         // current file hash
+	solidr io.Reader         // reader for solid file
 }
 
 // Read reads from the current file in the RAR archive.
@@ -299,20 +301,27 @@ func (r *Reader) Read(p []byte) (int, error) {
 
 // Next advances to the next file in the archive.
 func (r *Reader) Next() (*FileHeader, error) {
+	var err error
 	if r.solidr != nil {
 		// solid files must be read fully to update decoder information
-		if _, err := io.Copy(ioutil.Discard, r.solidr); err != nil {
+		if _, err = io.Copy(ioutil.Discard, r.solidr); err != nil {
+			return nil, err
+		}
+	}
+	if r.pr != nil {
+		if err = r.pr.skip(); err != nil {
 			return nil, err
 		}
 	}
 
-	h, err := r.pr.next() // skip to next file
+	r.pr, err = newPackedFileReader(r.v) // open next file
 	if err != nil {
 		return nil, err
 	}
+	h := r.pr.h
 	r.solidr = nil
 
-	br := byteReader(&r.pr) // start with packed file reader
+	br := byteReader(r.pr) // start with packed file reader
 
 	// check for encryption
 	if len(h.key) > 0 && len(h.iv) > 0 {
@@ -345,7 +354,7 @@ func (r *Reader) Next() (*FileHeader, error) {
 
 func (r *Reader) init(v *volume) {
 	r.r = bytes.NewReader(nil) // initial reads will always return EOF
-	r.pr.r = v
+	r.v = v
 }
 
 // NewReader creates a Reader reading from r.
