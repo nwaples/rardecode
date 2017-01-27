@@ -167,9 +167,9 @@ type fileBlockHeader struct {
 
 // fileBlockReader provides sequential access to file blocks in a RAR archive.
 type fileBlockReader interface {
-	next(br *bufio.Reader) (*fileBlockHeader, error) // reads the next file block header at current position
-	reset()                                          // resets encryption
-	version() int                                    // returns current archive format version
+	next(br *discardReader) (*fileBlockHeader, error) // reads the next file block header at current position
+	reset()                                           // resets encryption
+	version() int                                     // returns current archive format version
 }
 
 // packedFileReader provides sequential access to packed files in a RAR archive.

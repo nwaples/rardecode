@@ -19,6 +19,8 @@ const (
 
 	fileFmt15 = iota + 1 // Version 1.5 archive file format
 	fileFmt50            // Version 5.0 archive file format
+
+	maxInt = int(^uint(0) >> 1)
 )
 
 var (
@@ -78,6 +80,35 @@ func (b *readBuf) uvarint() uint64 {
 	// if we run out of bytes, just return 0
 	*b = (*b)[len(*b):]
 	return 0
+}
+
+type discardReader struct {
+	*bufio.Reader
+	rs io.ReadSeeker
+}
+
+func (dr *discardReader) discard(n int64) error {
+	var err error
+	l := int64(dr.Buffered())
+	if n <= l {
+		_, err = dr.Discard(int(n))
+	} else if dr.rs != nil {
+		n -= l
+		_, err = dr.rs.Seek(n, io.SeekCurrent)
+		dr.Reset(dr.rs)
+	} else {
+		for n > int64(maxInt) && err == nil {
+			_, err = dr.Discard(maxInt)
+			n -= int64(maxInt)
+		}
+		if err == nil && n > 0 {
+			_, err = dr.Discard(int(n))
+		}
+	}
+	if err == io.EOF {
+		err = io.ErrUnexpectedEOF
+	}
+	return err
 }
 
 // readFull wraps io.ReadFull to return io.ErrUnexpectedEOF instead
@@ -229,7 +260,8 @@ func (v *volume) next() (*fileBlockHeader, error) {
 	for {
 		var atEOF bool
 
-		h, err := v.fbr.next(v.br)
+		dr := &discardReader{v.br, v.f}
+		h, err := v.fbr.next(dr)
 		if err == nil {
 			v.byteReader = limitByteReader(v.br, h.PackedSize)
 		}

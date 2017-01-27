@@ -9,7 +9,6 @@ import (
 	"hash"
 	"hash/crc32"
 	"io"
-	"io/ioutil"
 	"time"
 )
 
@@ -388,7 +387,7 @@ func (a *archive50) readBlockHeader(r io.Reader) (*blockHeader50, error) {
 }
 
 // next advances to the next file block in the archive
-func (a *archive50) next(br *bufio.Reader) (*fileBlockHeader, error) {
+func (a *archive50) next(br *discardReader) (*fileBlockHeader, error) {
 	for {
 		h, err := a.readBlockHeader(br)
 		if err != nil {
@@ -411,10 +410,7 @@ func (a *archive50) next(br *bufio.Reader) (*fileBlockHeader, error) {
 			return nil, errArchiveContinues
 		default:
 			// discard block data
-			_, err = io.CopyN(ioutil.Discard, br, h.dataSize)
-			if err == io.EOF {
-				err = io.ErrUnexpectedEOF
-			}
+			err = br.discard(h.dataSize)
 		}
 		if err != nil {
 			return nil, err
