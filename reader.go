@@ -178,15 +178,16 @@ type fileBlockReader interface {
 
 // packedFileReader provides sequential access to packed files in a RAR archive.
 type packedFileReader struct {
-	r *volume
-	h *fileBlockHeader // current file header
+	v *volume
+	h *fileBlockHeader   // current file header
+	r *limitedByteReader // reader for current file data block
 }
 
 // nextBlockInFile reads the next file block in the current file at the current
 // archive file position, or returns an error if there is a problem.
 // It is invalid to call this when already at the last block in the current file.
 func (f *packedFileReader) nextBlockInFile() error {
-	h, err := f.r.next()
+	h, err := f.v.next()
 	if err != nil {
 		if err == io.EOF {
 			// archive ended, but file hasn't
@@ -198,6 +199,7 @@ func (f *packedFileReader) nextBlockInFile() error {
 		return errInvalidFileBlock
 	}
 	f.h = h
+	f.r = limitByteReader(&discardReader{f.v.br, f.v.f}, h.PackedSize)
 	return nil
 }
 
@@ -260,7 +262,8 @@ func newPackedFileReader(v *volume) (*packedFileReader, error) {
 	if !h.first {
 		return nil, errInvalidFileBlock
 	}
-	return &packedFileReader{v, h}, nil
+	br := limitByteReader(&discardReader{v.br, v.f}, h.PackedSize)
+	return &packedFileReader{v, h, br}, nil
 }
 
 // Reader provides sequential access to files in a RAR archive.
