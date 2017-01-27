@@ -167,14 +167,14 @@ func findSig(br *bufio.Reader) (int, error) {
 // volume extends a fileBlockReader to be used across multiple
 // files in a multi-volume archive
 type volume struct {
-	byteReader // reader for current block data
-	fbr        fileBlockReader
-	f          *os.File      // current file handle
-	br         *bufio.Reader // buffered reader for current volume file
-	dir        string        // volume directory
-	file       string        // current volume file
-	num        int           // volume number
-	old        bool          // uses old naming scheme
+	*limitedByteReader // reader for current block data
+	fbr                fileBlockReader
+	f                  *os.File      // current file handle
+	br                 *bufio.Reader // buffered reader for current volume file
+	dir                string        // volume directory
+	file               string        // current volume file
+	num                int           // volume number
+	old                bool          // uses old naming scheme
 }
 
 // nextVolName updates name to the next filename in the archive.
@@ -263,7 +263,7 @@ func (v *volume) next() (*fileBlockHeader, error) {
 		dr := &discardReader{v.br, v.f}
 		h, err := v.fbr.next(dr)
 		if err == nil {
-			v.byteReader = limitByteReader(v.br, h.PackedSize)
+			v.limitedByteReader = limitByteReader(dr, h.PackedSize)
 		}
 		if len(v.file) == 0 {
 			return h, err

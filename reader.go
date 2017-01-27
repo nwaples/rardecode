@@ -67,7 +67,7 @@ func (l *limitedReader) Read(p []byte) (int, error) {
 
 type limitedByteReader struct {
 	limitedReader
-	br io.ByteReader
+	br *discardReader
 }
 
 func (l *limitedByteReader) ReadByte() (byte, error) {
@@ -83,10 +83,14 @@ func (l *limitedByteReader) ReadByte() (byte, error) {
 	return c, err
 }
 
+func (l *limitedByteReader) skip() error {
+	return l.br.discard(l.n)
+}
+
 // limitByteReader returns a limitedByteReader that reads from r and stops with
 // io.EOF after n bytes.
 // If r returns an io.EOF before reading n bytes, io.ErrUnexpectedEOF is returned.
-func limitByteReader(r byteReader, n int64) *limitedByteReader {
+func limitByteReader(r *discardReader, n int64) *limitedByteReader {
 	return &limitedByteReader{limitedReader{r, n, io.ErrUnexpectedEOF}, r}
 }
 
@@ -203,7 +207,7 @@ func (f *packedFileReader) next() (*fileBlockHeader, error) {
 		// skip to last block in current file
 		for !f.h.last {
 			// discard remaining block data
-			if _, err := io.Copy(ioutil.Discard, f.r); err != nil {
+			if err := f.r.skip(); err != nil {
 				return nil, err
 			}
 			if err := f.nextBlockInFile(); err != nil {
@@ -211,7 +215,7 @@ func (f *packedFileReader) next() (*fileBlockHeader, error) {
 			}
 		}
 		// discard last block data
-		if _, err := io.Copy(ioutil.Discard, f.r); err != nil {
+		if err := f.r.skip(); err != nil {
 			return nil, err
 		}
 	}
