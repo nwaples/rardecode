@@ -91,13 +91,12 @@ func newLittleEndianCRC32() hash.Hash32 {
 
 // archive50 implements fileBlockReader for RAR 5 file format archives
 type archive50 struct {
-	byteReader // reader for current block data
-	pass       []byte
-	blockKey   []byte                // key used to encrypt blocks
-	multi      bool                  // archive is multi-volume
-	solid      bool                  // is a solid archive
-	buf        readBuf               // temporary buffer
-	keyCache   [cacheSize50]struct { // encryption key cache
+	pass     []byte
+	blockKey []byte                // key used to encrypt blocks
+	multi    bool                  // archive is multi-volume
+	solid    bool                  // is a solid archive
+	buf      readBuf               // temporary buffer
+	keyCache [cacheSize50]struct { // encryption key cache
 		kdfCount int
 		salt     []byte
 		keys     [][]byte
@@ -394,7 +393,6 @@ func (a *archive50) next(br *bufio.Reader) (*fileBlockHeader, error) {
 		if err != nil {
 			return nil, err
 		}
-		a.byteReader = limitByteReader(br, h.dataSize)
 		switch h.htype {
 		case block5File:
 			return a.parseFileHeader(h)
@@ -412,7 +410,10 @@ func (a *archive50) next(br *bufio.Reader) (*fileBlockHeader, error) {
 			return nil, errArchiveContinues
 		default:
 			// discard block data
-			_, err = io.Copy(ioutil.Discard, a.byteReader)
+			_, err = io.CopyN(ioutil.Discard, br, h.dataSize)
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
 		}
 		if err != nil {
 			return nil, err

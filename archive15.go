@@ -63,14 +63,13 @@ type blockHeader15 struct {
 
 // archive15 implements fileBlockReader for RAR 1.5 file format archives
 type archive15 struct {
-	byteReader      // reader for current block data
-	multi      bool // archive is multi-volume
-	old        bool // archive uses old naming scheme
-	solid      bool // archive is a solid archive
-	encrypted  bool
-	pass       []uint16              // password in UTF-16
-	buf        readBuf               // temporary buffer
-	keyCache   [cacheSize30]struct { // cache of previously calculated decryption keys
+	multi     bool // archive is multi-volume
+	old       bool // archive uses old naming scheme
+	solid     bool // archive is a solid archive
+	encrypted bool
+	pass      []uint16              // password in UTF-16
+	buf       readBuf               // temporary buffer
+	keyCache  [cacheSize30]struct { // cache of previously calculated decryption keys
 		salt []byte
 		key  []byte
 		iv   []byte
@@ -399,8 +398,6 @@ func (a *archive15) next(br *bufio.Reader) (*fileBlockHeader, error) {
 		if err != nil {
 			return nil, err
 		}
-		a.byteReader = limitByteReader(br, h.dataSize) // reader for block data
-
 		switch h.htype {
 		case blockFile:
 			return a.parseFileHeader(h)
@@ -415,7 +412,10 @@ func (a *archive15) next(br *bufio.Reader) (*fileBlockHeader, error) {
 			}
 			return nil, errArchiveContinues
 		default:
-			_, err = io.Copy(ioutil.Discard, a.byteReader)
+			_, err = io.CopyN(ioutil.Discard, br, h.dataSize)
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
 		}
 		if err != nil {
 			return nil, err

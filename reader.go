@@ -166,8 +166,6 @@ type fileBlockHeader struct {
 
 // fileBlockReader provides sequential access to file blocks in a RAR archive.
 type fileBlockReader interface {
-	io.Reader                                        // Read's read data from the current file block
-	io.ByteReader                                    // Read bytes from current file block
 	next(br *bufio.Reader) (*fileBlockHeader, error) // reads the next file block header at current position
 	reset()                                          // resets encryption
 	isSolid() bool                                   // is archive solid
@@ -337,7 +335,7 @@ func (r *Reader) Next() (*FileHeader, error) {
 			return nil, err
 		}
 		r.r = &r.dr
-		if r.pr.r.isSolid() {
+		if r.pr.r.fbr.isSolid() {
 			r.solidr = r.r
 		}
 	}
@@ -371,7 +369,7 @@ func NewReader(r io.Reader, password string) (*Reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	v := &volume{fileBlockReader: fbr, br: br}
+	v := &volume{fbr: fbr, br: br}
 	rr := new(Reader)
 	rr.init(v)
 	return rr, nil

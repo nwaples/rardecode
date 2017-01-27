@@ -136,13 +136,14 @@ func findSig(br *bufio.Reader) (int, error) {
 // volume extends a fileBlockReader to be used across multiple
 // files in a multi-volume archive
 type volume struct {
-	fileBlockReader
-	f    *os.File      // current file handle
-	br   *bufio.Reader // buffered reader for current volume file
-	dir  string        // volume directory
-	file string        // current volume file
-	num  int           // volume number
-	old  bool          // uses old naming scheme
+	byteReader // reader for current block data
+	fbr        fileBlockReader
+	f          *os.File      // current file handle
+	br         *bufio.Reader // buffered reader for current volume file
+	dir        string        // volume directory
+	file       string        // current volume file
+	num        int           // volume number
+	old        bool          // uses old naming scheme
 }
 
 // nextVolName updates name to the next filename in the archive.
@@ -161,7 +162,7 @@ func (v *volume) nextVolName() {
 				v.file = v.file[:i+1] + "rar"
 			}
 		}
-		if a, ok := v.fileBlockReader.(*archive15); ok {
+		if a, ok := v.fbr.(*archive15); ok {
 			v.old = a.old
 		}
 		// new naming scheme must have volume number in filename
@@ -225,13 +226,17 @@ func (v *volume) nextVolName() {
 }
 
 func (v *volume) next() (*fileBlockHeader, error) {
-	if len(v.file) == 0 {
-		return v.fileBlockReader.next(v.br)
-	}
 	for {
 		var atEOF bool
 
-		h, err := v.fileBlockReader.next(v.br)
+		h, err := v.fbr.next(v.br)
+		if err == nil {
+			v.byteReader = limitByteReader(v.br, h.PackedSize)
+		}
+		if len(v.file) == 0 {
+			return h, err
+		}
+
 		switch err {
 		case errArchiveContinues:
 		case io.EOF:
@@ -258,10 +263,10 @@ func (v *volume) next() (*fileBlockHeader, error) {
 		if err != nil {
 			return nil, err
 		}
-		if v.version() != ver {
+		if v.fbr.version() != ver {
 			return nil, errVerMismatch
 		}
-		v.reset() // reset encryption
+		v.fbr.reset() // reset encryption
 	}
 }
 
@@ -282,7 +287,7 @@ func openVolume(name, password string) (*volume, error) {
 		return nil, err
 	}
 	v.br = bufio.NewReader(v.f)
-	v.fileBlockReader, err = newFileBlockReader(v.br, password)
+	v.fbr, err = newFileBlockReader(v.br, password)
 	if err != nil {
 		v.f.Close()
 		return nil, err
