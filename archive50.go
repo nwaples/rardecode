@@ -252,6 +252,7 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 
 	flags = h.data.uvarint() // compression flags
 	f.solid = flags&0x0040 > 0
+	f.arcSolid = a.solid
 	f.winSize = uint(flags&0x3C00)>>10 + 17
 	method := (flags >> 7) & 7 // compression method (0 == none)
 	if f.first && method != 0 {
@@ -425,10 +426,6 @@ func (a *archive50) version() int { return fileFmt50 }
 
 func (a *archive50) reset() {
 	a.blockKey = nil // reset encryption when opening new volume file
-}
-
-func (a *archive50) isSolid() bool {
-	return a.solid
 }
 
 // newArchive50 creates a new fileBlockReader for a Version 5 archive.

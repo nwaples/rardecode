@@ -151,16 +151,17 @@ func (f *FileHeader) Mode() os.FileMode {
 // Files may comprise one or more file blocks.
 // Solid files retain decode tables and dictionary from previous solid files in the archive.
 type fileBlockHeader struct {
-	first   bool      // first block in file
-	last    bool      // last block in file
-	solid   bool      // file is solid
-	winSize uint      // log base 2 of decode window size
-	hash    hash.Hash // hash used for file checksum
-	hashKey []byte    // optional hmac key to be used calculate file checksum
-	sum     []byte    // expected checksum for file contents
-	decVer  int       // decoder to use for file
-	key     []byte    // key for AES, non-empty if file encrypted
-	iv      []byte    // iv for AES, non-empty if file encrypted
+	first    bool      // first block in file
+	last     bool      // last block in file
+	solid    bool      // file is solid
+	arcSolid bool      // archive is solid
+	winSize  uint      // log base 2 of decode window size
+	hash     hash.Hash // hash used for file checksum
+	hashKey  []byte    // optional hmac key to be used calculate file checksum
+	sum      []byte    // expected checksum for file contents
+	decVer   int       // decoder to use for file
+	key      []byte    // key for AES, non-empty if file encrypted
+	iv       []byte    // iv for AES, non-empty if file encrypted
 	FileHeader
 }
 
@@ -168,7 +169,6 @@ type fileBlockHeader struct {
 type fileBlockReader interface {
 	next(br *bufio.Reader) (*fileBlockHeader, error) // reads the next file block header at current position
 	reset()                                          // resets encryption
-	isSolid() bool                                   // is archive solid
 	version() int                                    // returns current archive format version
 }
 
@@ -322,7 +322,7 @@ func (r *Reader) Next() (*FileHeader, error) {
 			return nil, err
 		}
 		r.r = &r.dr
-		if r.pr.r.fbr.isSolid() {
+		if h.arcSolid {
 			r.solidr = r.r
 		}
 	}
