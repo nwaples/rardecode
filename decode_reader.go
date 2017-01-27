@@ -137,7 +137,7 @@ type decodeReader struct {
 	filters []*filterBlock // list of filterBlock's, each with offset relative to previous in list
 }
 
-func (d *decodeReader) init(r io.ByteReader, dec decoder, winsize uint, reset bool) error {
+func (d *decodeReader) init(r io.ByteReader, ver int, winsize uint, reset bool) error {
 	if reset {
 		d.filters = nil
 	}
@@ -145,7 +145,18 @@ func (d *decodeReader) init(r io.ByteReader, dec decoder, winsize uint, reset bo
 	d.outbuf = nil
 	d.tot = 0
 	d.win.reset(winsize, reset)
-	d.dec = dec
+	if d.dec == nil {
+		switch ver {
+		case decode29Ver:
+			d.dec = new(decoder29)
+		case decode50Ver:
+			d.dec = new(decoder50)
+		default:
+			return errUnknownDecoder
+		}
+	} else if d.dec.version() != ver {
+		return errMultipleDecoders
+	}
 	return d.dec.init(r, reset)
 }
 

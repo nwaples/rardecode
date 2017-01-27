@@ -262,7 +262,6 @@ func (f *packedFileReader) ReadByte() (byte, error) {
 type Reader struct {
 	r      io.Reader        // reader for current unpacked file
 	pr     packedFileReader // reader for current packed file
-	d      decoder          // current decoder
 	dr     decodeReader     // reader for decoding and filters if file is compressed
 	hash   hash.Hash        // current file hash
 	solidr io.Reader        // reader for solid file
@@ -318,19 +317,7 @@ func (r *Reader) Next() (*FileHeader, error) {
 	r.r = br
 	// check for compression
 	if h.decVer > 0 {
-		if r.d == nil {
-			switch h.decVer {
-			case decode29Ver:
-				r.d = new(decoder29)
-			case decode50Ver:
-				r.d = new(decoder50)
-			default:
-				return nil, errUnknownDecoder
-			}
-		} else if r.d.version() != h.decVer {
-			return nil, errMultipleDecoders
-		}
-		err = r.dr.init(br, r.d, h.winSize, !h.solid)
+		err = r.dr.init(br, h.decVer, h.winSize, !h.solid)
 		if err != nil {
 			return nil, err
 		}
