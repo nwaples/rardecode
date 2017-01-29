@@ -104,26 +104,25 @@ func (w *window) copyBytes(len, off int) {
 	}
 }
 
-// read reads bytes from the beginning of the window into p
-func (w *window) read(p []byte) (n int) {
-	if w.r > w.w {
-		n = copy(p, w.buf[w.r:])
-		w.r = (w.r + n) & w.mask
-		p = p[n:]
-	}
-	if w.r < w.w {
-		l := copy(p, w.buf[w.r:w.w])
-		w.r += l
-		n += l
-	}
-	if w.l > 0 && n > 0 {
-		// if we have successfully read data, copy any
+func (w *window) readBytes(n int) []byte {
+	var b []byte
+	if w.l > 0 && w.available() > 0 {
+		// if there is any space available, copy any
 		// leftover data from a previous copyBytes.
 		l := w.l
 		w.l = 0
 		w.copyBytes(l, w.o)
 	}
-	return n
+	if w.r > w.w {
+		b = w.buf[w.r:]
+	} else if w.r < w.w {
+		b = w.buf[w.r:w.w]
+	}
+	if len(b) > n {
+		b = b[:n]
+	}
+	w.r = (w.r + len(b)) & w.mask
+	return b
 }
 
 // decodeReader implements io.Reader for decoding compressed data in RAR archives.
@@ -209,8 +208,12 @@ func (d *decodeReader) processFilters() (err error) {
 	if cap(d.buf) < f.length {
 		d.buf = make([]byte, f.length)
 	}
-	d.outbuf = d.buf[:f.length]
-	n := d.win.read(d.outbuf)
+	n := f.length
+	d.outbuf = append(d.buf[:0], d.win.readBytes(n)...)
+	if l := n - len(d.outbuf); l > 0 {
+		// didnt get full buffer because window wrapped, copy remaining part
+		d.outbuf = append(d.outbuf, d.win.readBytes(l)...)
+	}
 	for {
 		// run filter passing buffer and total bytes read so far
 		d.outbuf, err = f.filter(d.outbuf, d.tot)
@@ -260,15 +263,15 @@ func (d *decodeReader) fill() {
 	}
 }
 
-// Read decodes data and stores it in p.
-func (d *decodeReader) Read(p []byte) (n int, err error) {
+// readBytes returns a byte slice of upto n bytes,
+func (d *decodeReader) readBytes(n int) ([]byte, error) {
 	if len(d.outbuf) == 0 {
 		// no filter output, see if we need to create more
 		if d.win.buffered() == 0 {
 			// fill empty window
 			d.fill()
 			if d.win.buffered() == 0 {
-				return 0, d.readErr()
+				return nil, d.readErr()
 			}
 		} else if len(d.filters) > 0 {
 			f := d.filters[0]
@@ -278,25 +281,35 @@ func (d *decodeReader) Read(p []byte) (n int, err error) {
 		}
 		if len(d.filters) > 0 {
 			if err := d.processFilters(); err != nil {
-				return 0, err
+				return nil, err
 			}
 		}
 	}
-	if len(d.outbuf) > 0 {
-		// copy filter output into p
-		n = copy(p, d.outbuf)
-		d.outbuf = d.outbuf[n:]
+	var b []byte
+	if l := len(d.outbuf); l > 0 {
+		// return filter output
+		if l < n {
+			n = l
+		}
+		b, d.outbuf = d.outbuf[:n], d.outbuf[n:]
 	} else if len(d.filters) > 0 {
 		f := d.filters[0]
-		if f.offset < len(p) {
+		if f.offset < n {
 			// only read data up to beginning of next filter
-			p = p[:f.offset]
+			n = f.offset
 		}
-		n = d.win.read(p) // read directly from window
-		f.offset -= n     // adjust first filter offset by bytes just read
+		b = d.win.readBytes(n) // read directly from window
+		f.offset -= len(b)     // adjust first filter offset by bytes just read
 	} else {
-		n = d.win.read(p) // read directly from window
+		b = d.win.readBytes(n) // read directly from window
 	}
-	d.tot += int64(n)
-	return n, nil
+	d.tot += int64(len(b))
+	return b, nil
+}
+
+// Read decodes data and stores it in p.
+func (d *decodeReader) Read(p []byte) (int, error) {
+	b, err := d.readBytes(len(p))
+	n := copy(p, b)
+	return n, err
 }
