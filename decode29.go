@@ -106,7 +106,6 @@ func (d *decoder29) parseVMFilter(buf []byte) (*filterBlock, error) {
 		}
 		if n == 0 {
 			d.initFilters()
-			fb.reset = true
 		} else {
 			n--
 			if n > maxUniqueFilters {

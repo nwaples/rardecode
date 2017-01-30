@@ -23,7 +23,6 @@ type filter func(b []byte, offset int64) ([]byte, error)
 type filterBlock struct {
 	length int    // length of block
 	offset int    // bytes to be read before start of block
-	reset  bool   // drop all existing queued filters
 	filter filter // filter function
 }
 
@@ -167,9 +166,6 @@ func (d *decodeReader) readErr() error {
 
 // queueFilter adds a filterBlock to the end decodeReader's filters.
 func (d *decodeReader) queueFilter(f *filterBlock) error {
-	if f.reset {
-		d.filters = nil
-	}
 	if len(d.filters) >= maxQueuedFilters {
 		return errTooManyFilters
 	}
