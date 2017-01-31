@@ -6,6 +6,7 @@ import (
 )
 
 const (
+	minFilterBufSize = vmSize + 4 // v3 vm memory size
 	minWindowSize    = 0x40000
 	maxQueuedFilters = 8192
 )
@@ -202,7 +203,11 @@ func (d *decodeReader) processFilters() (err error) {
 	}
 
 	if cap(d.buf) < f.length {
-		d.buf = make([]byte, f.length)
+		if f.length < minFilterBufSize {
+			d.buf = make([]byte, minFilterBufSize)
+		} else {
+			d.buf = make([]byte, f.length)
+		}
 	}
 	n := f.length
 	d.outbuf = append(d.buf[:0], d.win.readBytes(n)...)
