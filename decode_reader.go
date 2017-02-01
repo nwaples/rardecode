@@ -86,18 +86,37 @@ func (w *window) writeByte(c byte) {
 
 // copyBytes copies len bytes at off distance from the end
 // to the end of the window.
-func (w *window) copyBytes(len, off int) {
-	len &= w.mask
+func (w *window) copyBytes(length, offset int) {
+	w.l = length & w.mask
+	w.o = offset
 
-	i := (w.w - off) & w.mask
-	for len > 0 && w.w < w.size {
+	i := (w.w - w.o) & w.mask
+	iend := i + w.l
+	if i > w.w {
+		if iend > w.size {
+			iend = w.size
+		}
+		n := copy(w.buf[w.w:], w.buf[i:iend])
+		w.w += n
+		w.l -= n
+		if w.l == 0 {
+			return
+		}
+		iend = w.l
+		i = 0
+	}
+	if iend <= w.w {
+		n := copy(w.buf[w.w:], w.buf[i:iend])
+		w.w += n
+		w.l -= n
+		return
+	}
+	for w.l > 0 && w.w < w.size {
 		w.buf[w.w] = w.buf[i]
 		w.w++
-		len--
-		i = (i + 1) & w.mask
+		i++
+		w.l--
 	}
-	w.o = off
-	w.l = len
 }
 
 func (w *window) bytes() []byte {
