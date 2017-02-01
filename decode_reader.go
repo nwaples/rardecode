@@ -35,8 +35,10 @@ type decoder interface {
 }
 
 // window is a sliding window buffer.
+// Writes will not be allowed to wrap around until all bytes have been read.
 type window struct {
 	buf  []byte
+	size int // buf length
 	mask int // buf length mask
 	r    int // index in buf for reads (beginning)
 	w    int // index in buf for writes (end)
@@ -45,10 +47,10 @@ type window struct {
 }
 
 // buffered returns the number of bytes yet to be read from window
-func (w *window) buffered() int { return (w.w - w.r) & w.mask }
+func (w *window) buffered() int { return w.w - w.r }
 
 // available returns the number of bytes that can be written before the window is full
-func (w *window) available() int { return (w.r - w.w - 1) & w.mask }
+func (w *window) available() int { return w.size - w.w }
 
 func (w *window) reset(log2size uint, clear bool) {
 	size := 1 << log2size
@@ -65,6 +67,7 @@ func (w *window) reset(log2size uint, clear bool) {
 			w.w = n
 		}
 		w.buf = b
+		w.size = size
 		w.mask = size - 1
 	} else if clear {
 		for i := range w.buf {
@@ -78,7 +81,7 @@ func (w *window) reset(log2size uint, clear bool) {
 // writeByte writes c to the end of the window
 func (w *window) writeByte(c byte) {
 	w.buf[w.w] = c
-	w.w = (w.w + 1) & w.mask
+	w.w++
 }
 
 // copyBytes copies len bytes at off distance from the end
@@ -86,42 +89,29 @@ func (w *window) writeByte(c byte) {
 func (w *window) copyBytes(len, off int) {
 	len &= w.mask
 
-	n := w.available()
-	if len > n {
-		// if there is not enough space availaible we copy
-		// as much as we can and save the offset and length
-		// of the remaining data to be copied later.
-		w.l = len - n
-		w.o = off
-		len = n
-	}
-
 	i := (w.w - off) & w.mask
-	for ; len > 0; len-- {
+	for len > 0 && w.w < w.size {
 		w.buf[w.w] = w.buf[i]
-		w.w = (w.w + 1) & w.mask
+		w.w++
+		len--
 		i = (i + 1) & w.mask
 	}
+	w.o = off
+	w.l = len
 }
 
-func (w *window) readBytes(n int) []byte {
-	var b []byte
-	if w.l > 0 && w.available() > 0 {
+func (w *window) bytes() []byte {
+	if w.l > 0 && w.w < w.size {
 		// if there is any space available, copy any
 		// leftover data from a previous copyBytes.
-		l := w.l
-		w.l = 0
-		w.copyBytes(l, w.o)
+		w.copyBytes(w.l, w.o)
 	}
-	if w.r > w.w {
-		b = w.buf[w.r:]
-	} else if w.r < w.w {
-		b = w.buf[w.r:w.w]
+	b := w.buf[w.r:w.w]
+	if w.w == w.size {
+		// start from beginning of window again
+		w.w = 0
 	}
-	if len(b) > n {
-		b = b[:n]
-	}
-	w.r = (w.r + len(b)) & w.mask
+	w.r = w.w
 	return b
 }
 
@@ -131,7 +121,8 @@ type decodeReader struct {
 	dec     decoder // decoder being used to unpack file
 	tot     int64   // total bytes read
 	buf     []byte  // filter input/output buffer
-	outbuf  []byte  // filter output not yet read
+	outbuf  []byte  // output not yet read
+	winbuf  []byte  // unprocessed window bytes output
 	err     error
 	filters []*filterBlock // list of filterBlock's, each with offset relative to previous in list
 }
@@ -141,7 +132,11 @@ func (d *decodeReader) init(r io.ByteReader, ver int, winsize uint, reset bool) 
 		d.filters = nil
 	}
 	d.err = nil
+	if cap(d.buf) > 0 {
+		d.buf = d.buf[:0]
+	}
 	d.outbuf = nil
+	d.winbuf = nil
 	d.tot = 0
 	d.win.reset(winsize, reset)
 	if d.dec == nil {
@@ -193,28 +188,10 @@ func (d *decodeReader) processFilters() (err error) {
 		return nil
 	}
 	d.filters = d.filters[1:]
-	if d.win.buffered() < f.length {
-		// fill() didn't return enough bytes
-		err = d.readErr()
-		if err == nil || err == io.EOF {
-			return errInvalidFilter
-		}
-		return err
-	}
 
-	if cap(d.buf) < f.length {
-		if f.length < minFilterBufSize {
-			d.buf = make([]byte, minFilterBufSize)
-		} else {
-			d.buf = make([]byte, f.length)
-		}
-	}
 	n := f.length
-	d.outbuf = append(d.buf[:0], d.win.readBytes(n)...)
-	if l := n - len(d.outbuf); l > 0 {
-		// didnt get full buffer because window wrapped, copy remaining part
-		d.outbuf = append(d.outbuf, d.win.readBytes(l)...)
-	}
+	d.outbuf = d.buf
+	d.buf = d.buf[:0]
 	for {
 		// run filter passing buffer and total bytes read so far
 		d.outbuf, err = f.filter(d.outbuf, d.tot)
@@ -223,7 +200,7 @@ func (d *decodeReader) processFilters() (err error) {
 		}
 		if cap(d.outbuf) > cap(d.buf) {
 			// Filter returned a bigger buffer, save it for future filters.
-			d.buf = d.outbuf
+			d.buf = d.outbuf[:0]
 		}
 		if len(d.filters) == 0 {
 			return nil
@@ -266,44 +243,60 @@ func (d *decodeReader) fill() {
 
 // readBytes returns a byte slice of upto n bytes,
 func (d *decodeReader) readBytes(n int) ([]byte, error) {
-	if len(d.outbuf) == 0 {
-		// no filter output, see if we need to create more
-		if d.win.buffered() == 0 {
-			// fill empty window
-			d.fill()
-			if d.win.buffered() == 0 {
-				return nil, d.readErr()
+	for len(d.outbuf) == 0 {
+		l := len(d.winbuf)
+		if l == 0 {
+			// get new window buffer
+			d.winbuf = d.win.bytes()
+			if l = len(d.winbuf); l == 0 {
+				d.fill()
+				d.winbuf = d.win.bytes()
+				if l = len(d.winbuf); l == 0 {
+					return nil, d.readErr()
+				}
 			}
-		} else if len(d.filters) > 0 {
+		}
+		// process window buffer
+		if len(d.filters) == 0 {
+			// no filters so can direct output
+			d.outbuf = d.winbuf
+			d.winbuf = nil
+		} else {
 			f := d.filters[0]
-			if f.offset == 0 && f.length > d.win.buffered() {
-				d.fill() // filter at current offset needs more data
-			}
-		}
-		if len(d.filters) > 0 {
-			if err := d.processFilters(); err != nil {
-				return nil, err
+			if f.offset > 0 {
+				// move window bytes before filter to output buffer
+				if f.offset < l {
+					l = f.offset
+				}
+				d.outbuf, d.winbuf = d.winbuf[:l], d.winbuf[l:]
+				f.offset -= l
+			} else {
+				if cap(d.buf) < f.length {
+					if f.length < minFilterBufSize {
+						d.buf = make([]byte, 0, minFilterBufSize)
+					} else {
+						d.buf = make([]byte, 0, f.length)
+					}
+				}
+				nn := f.length - len(d.buf)
+				if l >= nn {
+					d.buf = append(d.buf, d.winbuf[:nn]...)
+					d.winbuf = d.winbuf[nn:]
+					if err := d.processFilters(); err != nil {
+						return nil, err
+					}
+				} else {
+					// not enough bytes for filter, copy to buffer and loop to get more
+					d.buf = append(d.buf, d.winbuf...)
+				}
 			}
 		}
 	}
-	var b []byte
-	if l := len(d.outbuf); l > 0 {
-		// return filter output
-		if l < n {
-			n = l
-		}
-		b, d.outbuf = d.outbuf[:n], d.outbuf[n:]
-	} else if len(d.filters) > 0 {
-		f := d.filters[0]
-		if f.offset < n {
-			// only read data up to beginning of next filter
-			n = f.offset
-		}
-		b = d.win.readBytes(n) // read directly from window
-		f.offset -= len(b)     // adjust first filter offset by bytes just read
-	} else {
-		b = d.win.readBytes(n) // read directly from window
+	if l := len(d.outbuf); l < n {
+		n = l
 	}
+	b := d.outbuf[:n]
+	d.outbuf = d.outbuf[n:]
 	d.tot += int64(len(b))
 	return b, nil
 }
