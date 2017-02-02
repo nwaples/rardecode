@@ -6,7 +6,6 @@ import (
 )
 
 const (
-	minFilterBufSize = vmSize + 4 // v3 vm memory size
 	minWindowSize    = 0x40000
 	maxQueuedFilters = 8192
 )
@@ -291,11 +290,7 @@ func (d *decodeReader) readBytes(n int) ([]byte, error) {
 				f.offset -= l
 			} else {
 				if cap(d.buf) < f.length {
-					if f.length < minFilterBufSize {
-						d.buf = make([]byte, 0, minFilterBufSize)
-					} else {
-						d.buf = make([]byte, 0, f.length)
-					}
+					d.buf = make([]byte, 0, f.length)
 				}
 				nn := f.length - len(d.buf)
 				if l >= nn {

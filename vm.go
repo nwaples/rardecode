@@ -59,7 +59,6 @@ func newVM(mem []byte) *vm {
 	v := new(vm)
 
 	if cap(mem) < vmSize+4 {
-		// This should never happen, mem passed in should be large enough.
 		v.m = make([]byte, vmSize+4)
 		copy(v.m, mem)
 	} else {
