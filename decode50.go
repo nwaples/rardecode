@@ -186,16 +186,18 @@ func readFilter(br bitReader) (*filterBlock, error) {
 	return fb, nil
 }
 
-func (d *decoder50) decodeSym(win *window, sym int) (*filterBlock, error) {
+func (d *decoder50) decodeSym(dr *decodeReader, sym int) error {
 	switch {
 	case sym < 256:
 		// literal
-		win.writeByte(byte(sym))
-		return nil, nil
+		dr.writeByte(byte(sym))
+		return nil
 	case sym == 256:
 		f, err := readFilter(d.br)
-		f.offset += win.buffered()
-		return f, err
+		if f != nil {
+			err = dr.queueFilter(f)
+		}
+		return err
 	case sym == 257:
 		// use previous offset and length
 	case sym < 262:
@@ -206,22 +208,22 @@ func (d *decoder50) decodeSym(win *window, sym int) (*filterBlock, error) {
 
 		sl, err := d.lengthDecoder.readSym(d.br)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		d.length, err = slotToLength(d.br, sl)
 		if err != nil {
-			return nil, err
+			return err
 		}
 	default:
 		length, err := slotToLength(d.br, sym-262)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		offset := 1
 		slot, err := d.offsetDecoder.readSym(d.br)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if slot < 4 {
 			offset += slot
@@ -233,19 +235,19 @@ func (d *decoder50) decodeSym(win *window, sym int) (*filterBlock, error) {
 				if bits > 4 {
 					n, err := d.br.readBits(bits - 4)
 					if err != nil {
-						return nil, err
+						return err
 					}
 					offset += n << 4
 				}
 				n, err := d.lowoffsetDecoder.readSym(d.br)
 				if err != nil {
-					return nil, err
+					return err
 				}
 				offset += n
 			} else {
 				n, err := d.br.readBits(bits)
 				if err != nil {
-					return nil, err
+					return err
 				}
 				offset += n
 			}
@@ -263,34 +265,28 @@ func (d *decoder50) decodeSym(win *window, sym int) (*filterBlock, error) {
 		d.offset[0] = offset
 		d.length = length
 	}
-	win.copyBytes(d.length, d.offset[0])
-	return nil, nil
+	dr.copyBytes(d.length, d.offset[0])
+	return nil
 }
 
-func (d *decoder50) fill(w *window) ([]*filterBlock, error) {
-	var fl []*filterBlock
-
-	for w.available() > 0 {
+func (d *decoder50) fill(dr *decodeReader) error {
+	for dr.notFull() {
 		sym, err := d.mainDecoder.readSym(d.br)
 		if err == nil {
-			var f *filterBlock
-			f, err = d.decodeSym(w, sym)
-			if f != nil {
-				fl = append(fl, f)
-			}
+			err = d.decodeSym(dr, sym)
 		} else if err == io.EOF {
 			// reached end of the block
 			if d.lastBlock {
-				return fl, io.EOF
+				return io.EOF
 			}
 			err = d.readBlockHeader()
 		}
 		if err != nil {
 			if err == io.EOF {
-				return fl, errDecoderOutOfData
+				return errDecoderOutOfData
 			}
-			return fl, err
+			return err
 		}
 	}
-	return fl, nil
+	return nil
 }

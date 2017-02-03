@@ -33,7 +33,7 @@ type decoder29 struct {
 	// current decode function (lz or ppm).
 	// When called it should perform a single decode operation, and either apply the
 	// data to the window or return they raw bytes for a filter.
-	decode func(w *window) ([]byte, error)
+	decode func(dr *decodeReader) ([]byte, error)
 
 	lz  lz29Decoder  // lz decoder
 	ppm ppm29Decoder // ppm decoder
@@ -220,23 +220,19 @@ func (d *decoder29) readBlockHeader() error {
 
 }
 
-func (d *decoder29) fill(w *window) ([]*filterBlock, error) {
+func (d *decoder29) fill(dr *decodeReader) error {
 	if d.eof {
-		return nil, io.EOF
+		return io.EOF
 	}
 
-	var fl []*filterBlock
-
-	for w.available() > 0 {
-		b, err := d.decode(w) // perform a single decode operation
+	for dr.notFull() {
+		b, err := d.decode(dr) // perform a single decode operation
 		if len(b) > 0 && err == nil {
 			// parse raw data for filter and add to list of filters
 			var f *filterBlock
 			f, err = d.parseVMFilter(b)
 			if f != nil {
-				// make offset relative to read index (from write index)
-				f.offset += w.buffered()
-				fl = append(fl, f)
+				err = dr.queueFilter(f)
 			}
 		}
 
@@ -258,8 +254,7 @@ func (d *decoder29) fill(w *window) ([]*filterBlock, error) {
 		case io.EOF:
 			err = errDecoderOutOfData
 		}
-		return fl, err
+		return err
 	}
-	// return filters
-	return fl, nil
+	return nil
 }

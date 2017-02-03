@@ -129,7 +129,7 @@ func (d *lz29Decoder) readEndOfBlock() error {
 	return endOfFile
 }
 
-func (d *lz29Decoder) decode(win *window) ([]byte, error) {
+func (d *lz29Decoder) decode(dr *decodeReader) ([]byte, error) {
 	sym, err := d.mainDecoder.readSym(d.br)
 	if err != nil {
 		return nil, err
@@ -138,7 +138,7 @@ func (d *lz29Decoder) decode(win *window) ([]byte, error) {
 	switch {
 	case sym < 256:
 		// literal
-		win.writeByte(byte(sym))
+		dr.writeByte(byte(sym))
 		return nil, nil
 	case sym == 256:
 		return nil, d.readEndOfBlock()
@@ -242,6 +242,6 @@ func (d *lz29Decoder) decode(win *window) ([]byte, error) {
 		copy(d.offset[1:], d.offset[:])
 		d.offset[0] = offset
 	}
-	win.copyBytes(d.length, d.offset[0])
+	dr.copyBytes(d.length, d.offset[0])
 	return nil, nil
 }

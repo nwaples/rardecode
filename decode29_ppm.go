@@ -84,13 +84,13 @@ func (d *ppm29Decoder) readFilterData() ([]byte, error) {
 	return buf, nil
 }
 
-func (d *ppm29Decoder) decode(w *window) ([]byte, error) {
+func (d *ppm29Decoder) decode(dr *decodeReader) ([]byte, error) {
 	c, err := d.m.ReadByte()
 	if err != nil {
 		return nil, err
 	}
 	if c != d.esc {
-		w.writeByte(c)
+		dr.writeByte(c)
 		return nil, nil
 	}
 	c, err = d.m.ReadByte()
@@ -118,15 +118,15 @@ func (d *ppm29Decoder) decode(w *window) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		w.copyBytes(int(len)+32, offset+2)
+		dr.copyBytes(int(len)+32, offset+2)
 	case 5:
 		len, err := d.m.ReadByte()
 		if err != nil {
 			return nil, err
 		}
-		w.copyBytes(int(len)+4, 1)
+		dr.copyBytes(int(len)+4, 1)
 	default:
-		w.writeByte(d.esc)
+		dr.writeByte(d.esc)
 	}
 	return nil, nil
 }
