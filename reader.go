@@ -266,13 +266,49 @@ func newPackedFileReader(v *volume) (*packedFileReader, error) {
 	return &packedFileReader{v, h, br}, nil
 }
 
+type checksumReader struct {
+	r    io.Reader
+	hash hash.Hash
+	pr   *packedFileReader
+}
+
+func (cr *checksumReader) Read(p []byte) (int, error) {
+	n, err := cr.r.Read(p)
+	if n > 0 {
+		if n, err = cr.hash.Write(p[:n]); err != nil {
+			return n, err
+		}
+	}
+	if err != io.EOF {
+		return n, err
+	}
+	// calculate file checksum
+	h := cr.pr.h
+	sum := cr.hash.Sum(nil)
+	if len(h.hashKey) > 0 {
+		mac := hmac.New(sha256.New, h.hashKey)
+		mac.Write(sum)
+		sum = mac.Sum(sum[:0])
+		if len(h.sum) == 4 {
+			// CRC32
+			for i, v := range sum[4:] {
+				sum[i&3] ^= v
+			}
+			sum = sum[:4]
+		}
+	}
+	if !bytes.Equal(sum, h.sum) {
+		return n, errBadFileChecksum
+	}
+	return n, io.EOF
+}
+
 // Reader provides sequential access to files in a RAR archive.
 type Reader struct {
 	r      io.Reader // reader for current unpacked file
 	v      *volume
 	pr     *packedFileReader // reader for current packed file
 	dr     decodeReader      // reader for decoding and filters if file is compressed
-	hash   hash.Hash         // current file hash
 	solidr io.Reader         // reader for solid file
 }
 
@@ -281,28 +317,7 @@ func (r *Reader) Read(p []byte) (int, error) {
 	if r.r == nil {
 		return 0, io.EOF
 	}
-	n, err := r.r.Read(p)
-	if err == io.EOF && r.hash != nil {
-		// calculate file checksum
-		h := r.pr.h
-		sum := r.hash.Sum(nil)
-		if len(h.hashKey) > 0 {
-			mac := hmac.New(sha256.New, h.hashKey)
-			mac.Write(sum)
-			sum = mac.Sum(sum[:0])
-			if len(h.sum) == 4 {
-				// CRC32
-				for i, v := range sum[4:] {
-					sum[i&3] ^= v
-				}
-				sum = sum[:4]
-			}
-		}
-		if !bytes.Equal(sum, h.sum) {
-			return n, errBadFileChecksum
-		}
-	}
-	return n, err
+	return r.r.Read(p)
 }
 
 // Next advances to the next file in the archive.
@@ -349,9 +364,8 @@ func (r *Reader) Next() (*FileHeader, error) {
 		// Limit reading to UnPackedSize as there may be padding
 		r.r = &limitedReader{r.r, h.UnPackedSize, errShortFile}
 	}
-	r.hash = h.hash
-	if r.hash != nil {
-		r.r = io.TeeReader(r.r, r.hash) // write file data to checksum as it is read
+	if h.hash != nil {
+		r.r = &checksumReader{r.r, h.hash, r.pr}
 	}
 	fh := new(FileHeader)
 	*fh = h.FileHeader
