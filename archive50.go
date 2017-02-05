@@ -323,14 +323,14 @@ func (a *archive50) readBlockHeader(r io.Reader) (*blockHeader50, error) {
 	if a.blockKey != nil {
 		// block is encrypted
 		iv := a.buf[:16]
-		if err := readFull(r, iv); err != nil {
+		if _, err := io.ReadFull(r, iv); err != nil {
 			return nil, err
 		}
 		r = newAesDecryptReader(r, a.blockKey, iv)
 	}
 
 	b := a.buf[:minHeaderSize]
-	if err := readFull(r, b); err != nil {
+	if _, err := io.ReadFull(r, b); err != nil {
 		return nil, err
 	}
 	crc := b.uint32()
@@ -344,8 +344,8 @@ func (a *archive50) readBlockHeader(r io.Reader) (*blockHeader50, error) {
 	} else {
 		a.buf = a.buf[:size]
 	}
-	n := copy(a.buf, b)                            // copy left over bytes
-	if err := readFull(r, a.buf[n:]); err != nil { // read rest of header
+	n := copy(a.buf, b)                                  // copy left over bytes
+	if _, err := io.ReadFull(r, a.buf[n:]); err != nil { // read rest of header
 		return nil, err
 	}
 
@@ -391,6 +391,9 @@ func (a *archive50) next(br *discardReader) (*fileBlockHeader, error) {
 	for {
 		h, err := a.readBlockHeader(br)
 		if err != nil {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
 			return nil, err
 		}
 		switch h.htype {

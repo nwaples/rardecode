@@ -111,16 +111,6 @@ func (dr *discardReader) discard(n int64) error {
 	return err
 }
 
-// readFull wraps io.ReadFull to return io.ErrUnexpectedEOF instead
-// of io.EOF when 0 bytes are read.
-func readFull(r io.Reader, buf []byte) error {
-	_, err := io.ReadFull(r, buf)
-	if err == io.EOF {
-		return io.ErrUnexpectedEOF
-	}
-	return err
-}
-
 // findSig searches for the RAR signature and version at the beginning of a file.
 // It searches no more than maxSfxSize bytes.
 func findSig(br *bufio.Reader) (int, error) {

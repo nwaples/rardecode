@@ -334,21 +334,21 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 // readBlockHeader returns the next block header in the archive.
 // It will return io.EOF if there were no bytes read.
 func (a *archive15) readBlockHeader(r io.Reader) (*blockHeader15, error) {
-	var err error
-	b := a.buf[:7]
 	if a.encrypted {
 		salt := a.buf[:saltSize]
-		_, err = io.ReadFull(r, salt)
+		_, err := io.ReadFull(r, salt)
 		if err != nil {
 			return nil, err
 		}
 		key, iv := a.getKeys(salt)
 		r = newAesDecryptReader(r, key, iv)
-		err = readFull(r, b)
-	} else {
-		_, err = io.ReadFull(r, b)
 	}
+	b := a.buf[:7]
+	_, err := io.ReadFull(r, b)
 	if err != nil {
+		if err == io.EOF && a.encrypted {
+			err = io.ErrUnexpectedEOF
+		}
 		return nil, err
 	}
 
@@ -367,7 +367,10 @@ func (a *archive15) readBlockHeader(r io.Reader) (*blockHeader15, error) {
 		a.buf = readBuf(make([]byte, size))
 	}
 	h.data = a.buf[:size]
-	if err := readFull(r, h.data); err != nil {
+	if _, err := io.ReadFull(r, h.data); err != nil {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
 		return nil, err
 	}
 	hash.Write(h.data)
