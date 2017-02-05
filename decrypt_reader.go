@@ -6,6 +6,67 @@ import (
 	"io"
 )
 
+// cipherBlockSliceReader is a sliceReader that users a cipher.BlockMode to decrypt the input.
+type cipherBlockSliceReader struct {
+	r    sliceReader
+	mode cipher.BlockMode
+	n    int // bytes encrypted but not read
+}
+
+func (c *cipherBlockSliceReader) sizeInBlocks(n int) int {
+	bs := c.mode.BlockSize()
+	if rem := n % bs; rem > 0 {
+		n += bs - rem
+	}
+	return n
+}
+
+func (c *cipherBlockSliceReader) peek(n int) ([]byte, error) {
+	bn := c.sizeInBlocks(n)
+	b, err := c.r.peek(bn)
+	if err != nil {
+		if err == io.EOF && len(b) > 0 {
+			err = io.ErrUnexpectedEOF
+		}
+		return nil, err
+	}
+	if c.n < bn {
+		c.mode.CryptBlocks(b[c.n:], b[c.n:])
+		c.n = bn
+	}
+	return b[:n], nil
+}
+
+// readSlice returns the next n bytes of decrypted input.
+// If n is not a mulitple of the block size, the trailing bytes
+// of the last decrypted block will be discarded.
+func (c *cipherBlockSliceReader) readSlice(n int) ([]byte, error) {
+	bn := c.sizeInBlocks(n)
+	b, err := c.r.readSlice(bn)
+	if err != nil {
+		return nil, err
+	}
+	if c.n < bn {
+		c.mode.CryptBlocks(b[c.n:], b[c.n:])
+		c.n = 0
+	} else {
+		c.n -= bn
+	}
+	// ignore padding at end of last block
+	b = b[:n]
+	return b, nil
+}
+
+// newAesSliceReader creates a sliceReader that uses AES to decrypt the input
+func newAesSliceReader(r sliceReader, key, iv []byte) *cipherBlockSliceReader {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
+	mode := cipher.NewCBCDecrypter(block, iv)
+	return &cipherBlockSliceReader{r: r, mode: mode}
+}
+
 // cipherBlockReader implements Block Mode decryption of an io.Reader object.
 type cipherBlockReader struct {
 	r      io.Reader

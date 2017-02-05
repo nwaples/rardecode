@@ -82,6 +82,16 @@ func (b *readBuf) uvarint() uint64 {
 	return 0
 }
 
+// sliceReader implements the readSlice and peek functions.
+// The slices returned are only valid till the next readSlice or peek call.
+// If n bytes arent available no slice will be returned with the error value set.
+// The error is io.EOF only of 0 bytes were found, otherwise io.ErrUnexpectedEOF
+// will be returned on a short read.
+type sliceReader interface {
+	readSlice(n int) ([]byte, error) // return the next n bytes
+	peek(n int) ([]byte, error)      // return the next n bytes withough advancing reader
+}
+
 type discardReader struct {
 	*bufio.Reader
 	rs io.ReadSeeker
@@ -109,6 +119,34 @@ func (dr *discardReader) discard(n int64) error {
 		err = io.ErrUnexpectedEOF
 	}
 	return err
+}
+
+func (dr *discardReader) peek(n int) ([]byte, error) {
+	b, err := dr.Peek(n)
+	if err == io.EOF && len(b) > 0 {
+		err = io.ErrUnexpectedEOF
+	}
+	return b, err
+}
+
+func (dr *discardReader) readSlice(n int) ([]byte, error) {
+	b, err := dr.Peek(n)
+	if err == nil {
+		_, _ = dr.Discard(n)
+		return b, nil
+	}
+	if err != bufio.ErrBufferFull {
+		if err == io.EOF && len(b) > 0 {
+			err = io.ErrUnexpectedEOF
+		}
+		return nil, err
+	}
+	// bufio.Reader buffer is too small, create a new slice and copy to it
+	b = make([]byte, n)
+	if _, err = io.ReadFull(dr, b); err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 // findSig searches for the RAR signature and version at the beginning of a file.

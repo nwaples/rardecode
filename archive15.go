@@ -67,7 +67,6 @@ type archive15 struct {
 	solid     bool // archive is a solid archive
 	encrypted bool
 	pass      []uint16              // password in UTF-16
-	buf       readBuf               // temporary buffer
 	keyCache  [cacheSize30]struct { // cache of previously calculated decryption keys
 		salt []byte
 		key  []byte
@@ -333,50 +332,46 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 
 // readBlockHeader returns the next block header in the archive.
 // It will return io.EOF if there were no bytes read.
-func (a *archive15) readBlockHeader(r io.Reader) (*blockHeader15, error) {
+func (a *archive15) readBlockHeader(r sliceReader) (*blockHeader15, error) {
 	if a.encrypted {
-		salt := a.buf[:saltSize]
-		_, err := io.ReadFull(r, salt)
+		salt, err := r.readSlice(saltSize)
 		if err != nil {
 			return nil, err
 		}
 		key, iv := a.getKeys(salt)
-		r = newAesDecryptReader(r, key, iv)
+		r = newAesSliceReader(r, key, iv)
 	}
-	b := a.buf[:7]
-	_, err := io.ReadFull(r, b)
+	var b readBuf
+	var err error
+	// peek to find the header size
+	b, err = r.peek(7)
 	if err != nil {
 		if err == io.EOF && a.encrypted {
 			err = io.ErrUnexpectedEOF
 		}
 		return nil, err
 	}
-
 	crc := b.uint16()
-	hash := crc32.NewIEEE()
-	hash.Write(b)
 	h := new(blockHeader15)
 	h.htype = b.byte()
 	h.flags = b.uint16()
-	size := b.uint16()
+	size := int(b.uint16())
 	if size < 7 {
 		return nil, errCorruptHeader
 	}
-	size -= 7
-	if int(size) > cap(a.buf) {
-		a.buf = readBuf(make([]byte, size))
-	}
-	h.data = a.buf[:size]
-	if _, err := io.ReadFull(r, h.data); err != nil {
+	h.data, err = r.readSlice(size)
+	if err != nil {
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
 		}
 		return nil, err
 	}
-	hash.Write(h.data)
+	hash := crc32.NewIEEE()
+	hash.Write(h.data[2:])
 	if crc != uint16(hash.Sum32()) {
 		return nil, errBadHeaderCrc
 	}
+	h.data = h.data[7:]
 	if h.flags&blockHasData > 0 {
 		if len(h.data) < 4 {
 			return nil, errCorruptHeader
@@ -433,6 +428,5 @@ func (a *archive15) reset() {
 func newArchive15(r *bufio.Reader, password string) fileBlockReader {
 	a := new(archive15)
 	a.pass = utf16.Encode([]rune(password)) // convert to UTF-16
-	a.buf = readBuf(make([]byte, 100))
 	return a
 }

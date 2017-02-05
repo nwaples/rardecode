@@ -50,8 +50,6 @@ const (
 	maxPbkdf2Salt = 64
 	pwCheckSize   = 8
 	maxKdfCount   = 24
-
-	minHeaderSize = 7
 )
 
 var (
@@ -94,7 +92,6 @@ type archive50 struct {
 	blockKey []byte                // key used to encrypt blocks
 	multi    bool                  // archive is multi-volume
 	solid    bool                  // is a solid archive
-	buf      readBuf               // temporary buffer
 	keyCache [cacheSize50]struct { // encryption key cache
 		kdfCount int
 		salt     []byte
@@ -319,43 +316,39 @@ func (a *archive50) parseEncryptionBlock(b readBuf) error {
 	return nil
 }
 
-func (a *archive50) readBlockHeader(r io.Reader) (*blockHeader50, error) {
+func (a *archive50) readBlockHeader(r sliceReader) (*blockHeader50, error) {
 	if a.blockKey != nil {
 		// block is encrypted
-		iv := a.buf[:16]
-		if _, err := io.ReadFull(r, iv); err != nil {
+		iv, err := r.readSlice(16)
+		if err != nil {
 			return nil, err
 		}
-		r = newAesDecryptReader(r, a.blockKey, iv)
+		r = newAesSliceReader(r, a.blockKey, iv)
 	}
-
-	b := a.buf[:minHeaderSize]
-	if _, err := io.ReadFull(r, b); err != nil {
+	var b readBuf
+	var err error
+	// peek to find the header size
+	b, err = r.peek(7)
+	if err != nil {
 		return nil, err
 	}
 	crc := b.uint32()
 
 	hash := crc32.NewIEEE()
-	hash.Write(b)
 
 	size := int(b.uvarint()) // header size
-	if size > cap(a.buf) {
-		a.buf = readBuf(make([]byte, size))
-	} else {
-		a.buf = a.buf[:size]
-	}
-	n := copy(a.buf, b)                                  // copy left over bytes
-	if _, err := io.ReadFull(r, a.buf[n:]); err != nil { // read rest of header
+	b, err = r.readSlice(7 - len(b) + size)
+	if err != nil {
 		return nil, err
 	}
 
 	// check header crc
-	hash.Write(a.buf[n:])
+	hash.Write(b[4:])
 	if crc != hash.Sum32() {
 		return nil, errBadHeaderCrc
 	}
 
-	b = a.buf
+	b = b[len(b)-size:]
 	h := new(blockHeader50)
 	h.htype = b.uvarint()
 	h.flags = b.uvarint()
@@ -431,6 +424,5 @@ func (a *archive50) reset() {
 func newArchive50(r *bufio.Reader, password string) fileBlockReader {
 	a := new(archive50)
 	a.pass = []byte(password)
-	a.buf = make([]byte, 100)
 	return a
 }
