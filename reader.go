@@ -272,16 +272,7 @@ type checksumReader struct {
 	pr   *packedFileReader
 }
 
-func (cr *checksumReader) Read(p []byte) (int, error) {
-	n, err := cr.r.Read(p)
-	if n > 0 {
-		if n, err = cr.hash.Write(p[:n]); err != nil {
-			return n, err
-		}
-	}
-	if err != io.EOF {
-		return n, err
-	}
+func (cr *checksumReader) eofError() error {
 	// calculate file checksum
 	h := cr.pr.h
 	sum := cr.hash.Sum(nil)
@@ -298,9 +289,22 @@ func (cr *checksumReader) Read(p []byte) (int, error) {
 		}
 	}
 	if !bytes.Equal(sum, h.sum) {
-		return n, errBadFileChecksum
+		return errBadFileChecksum
 	}
-	return n, io.EOF
+	return io.EOF
+}
+
+func (cr *checksumReader) Read(p []byte) (int, error) {
+	n, err := cr.r.Read(p)
+	if n > 0 {
+		if n, err = cr.hash.Write(p[:n]); err != nil {
+			return n, err
+		}
+	}
+	if err != io.EOF {
+		return n, err
+	}
+	return n, cr.eofError()
 }
 
 // Reader provides sequential access to files in a RAR archive.
