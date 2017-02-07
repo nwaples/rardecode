@@ -1,11 +1,9 @@
 package rardecode
 
-import "io"
-
 type ppm29Decoder struct {
 	m   model // ppm model
 	esc byte  // escape character
-	br  io.ByteReader
+	br  *rarBitReader
 }
 
 func (d *ppm29Decoder) init(br *rarBitReader) error {
@@ -15,9 +13,9 @@ func (d *ppm29Decoder) init(br *rarBitReader) error {
 	}
 	reset := maxOrder&0x20 > 0
 
-	// Should have flushed all unread bits from bitReader by now,
-	// use underlying ByteReader
-	d.br = br.r
+	// rarBitReader will be on a byte boundary now, so all ReadByte's
+	// from now on are byte aligned.
+	d.br = br
 
 	var maxMB int
 	if reset {
