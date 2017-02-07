@@ -15,7 +15,7 @@ type limitedBitReader struct {
 
 // limitBitReader returns a bitReader that reads from br and stops with io.EOF after n bits.
 // If br returns an io.EOF before reading n bits, err is returned.
-func limitBitReader(br bitReader, n int, err error) bitReader {
+func limitBitReader(br bitReader, n int, err error) *limitedBitReader {
 	return &limitedBitReader{br, n, err}
 }
 
@@ -43,17 +43,19 @@ type rarBitReader struct {
 	r io.ByteReader
 	v int
 	n uint
+	b []byte
 }
 
 func (r *rarBitReader) reset(br io.ByteReader) {
 	r.r = br
 	r.n = 0
 	r.v = 0
+	r.b = nil
 }
 
 func (r *rarBitReader) readBits(n uint) (int, error) {
 	for n > r.n {
-		c, err := r.r.ReadByte()
+		c, err := r.ReadByte()
 		if err != nil {
 			return 0, err
 		}
@@ -97,19 +99,33 @@ func (r *rarBitReader) readUint32() (uint32, error) {
 	return uint32(n), err
 }
 
+// ReadByte() returns a byte directly from buf b or the io.ByteReader r.
+// Current bit offsets are ignored.
 func (r *rarBitReader) ReadByte() (byte, error) {
-	n, err := r.readBits(8)
-	return byte(n), err
+	if len(r.b) == 0 {
+		if r.r == nil {
+			return 0, io.EOF
+		}
+		return r.r.ReadByte()
+	}
+	c := r.b[0]
+	r.b = r.b[1:]
+	return c, nil
 }
 
 // readFull reads len(p) bytes into p. If fewer bytes are read an error is returned.
 func (r *rarBitReader) readFull(p []byte) error {
+	if r.n == 0 && len(r.b) > 0 {
+		n := copy(p, r.b)
+		p = p[n:]
+		r.b = r.b[n:]
+	}
 	for i := range p {
-		c, err := r.ReadByte()
+		n, err := r.readBits(8)
 		if err != nil {
 			return err
 		}
-		p[i] = c
+		p[i] = byte(n)
 	}
 	return nil
 }

@@ -1,7 +1,6 @@
 package rardecode
 
 import (
-	"bytes"
 	"errors"
 	"io"
 )
@@ -94,7 +93,7 @@ func readVMCode(br *rarBitReader) ([]byte, error) {
 
 func (d *decoder29) parseVMFilter(buf []byte) (*filterBlock, error) {
 	flags := buf[0]
-	br := newRarBitReader(bytes.NewReader(buf[1:]))
+	br := &rarBitReader{b: buf[1:]}
 	fb := new(filterBlock)
 
 	// Find the filter number which is an index into d.filters.

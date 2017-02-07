@@ -84,7 +84,7 @@ func (d *lz29Decoder) init(br *rarBitReader) error {
 }
 
 func (d *lz29Decoder) readFilterData() (b []byte, err error) {
-	flags, err := d.br.ReadByte()
+	flags, err := d.br.readBits(8)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +105,7 @@ func (d *lz29Decoder) readFilterData() (b []byte, err error) {
 	}
 
 	buf := make([]byte, n+1)
-	buf[0] = flags
+	buf[0] = byte(flags)
 	err = d.br.readFull(buf[1:])
 
 	return buf, err
