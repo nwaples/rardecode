@@ -87,6 +87,34 @@ func (l *limitedByteReader) skip() error {
 	return l.br.discard(l.n)
 }
 
+// blocks returns a byte slice whose size is a multiple of blockSize.
+// If there is less than blockSize bytes available before EOF, then those
+// bytes will be returned. If oneBlock is set, then no more than one block
+// will be returned.
+func (l *limitedByteReader) blocks(blockSize int, oneBlock bool) ([]byte, error) {
+	if l.n == 0 {
+		return nil, io.EOF
+	}
+	var n int
+	if l.n < int64(blockSize) {
+		n = int(l.n)
+	} else if oneBlock {
+		n = blockSize
+	} else {
+		if _, err := l.br.Peek(blockSize); err != nil {
+			return nil, err
+		}
+		n = l.br.Buffered()
+		if int64(n) > l.n {
+			n = int(l.n)
+		}
+		n -= n % blockSize
+	}
+	b, err := l.br.readSlice(n)
+	l.n -= int64(len(b))
+	return b, err
+}
+
 // limitByteReader returns a limitedByteReader that reads from r and stops with
 // io.EOF after n bytes.
 // If r returns an io.EOF before reading n bytes, io.ErrUnexpectedEOF is returned.
@@ -251,6 +279,49 @@ func (f *packedFileReader) ReadByte() (byte, error) {
 	return c, err
 }
 
+// blocks returns a byte slice whose size is always a multiple of blockSize.
+func (f *packedFileReader) blocks(blockSize int) ([]byte, error) {
+	b, err := f.r.blocks(blockSize, false)
+	for err == io.EOF {
+		if f.h == nil || f.h.last {
+			return nil, io.EOF
+		}
+		if err = f.nextBlockInFile(); err != nil {
+			return nil, err
+		}
+		b, err = f.r.blocks(blockSize, false) // read new block data
+	}
+	if len(b) >= blockSize {
+		return b, err
+	}
+
+	// slice returned is smaller than blockSize. Try to get the rest
+	// from the following file blocks.
+	buf := make([]byte, 0, blockSize)
+	buf = append(buf, b...)
+	for len(buf) < blockSize {
+		// read a single small block of the remaining bytes
+		b, err = f.r.blocks(blockSize-len(buf), true)
+		switch err {
+		case nil:
+			buf = append(buf, b...)
+		case io.EOF:
+			if f.h == nil || f.h.last {
+				// not enough bytes available, return io.EOF
+				return nil, io.EOF
+			}
+			if err = f.nextBlockInFile(); err != nil {
+				return nil, err
+			}
+		default:
+			return nil, err
+		}
+	}
+	return buf, nil
+}
+
+func (f *packedFileReader) bytes() ([]byte, error) { return f.blocks(1) }
+
 func newPackedFileReader(v *volume) (*packedFileReader, error) {
 	h, err := v.next() // get next file block
 	if err != nil {
@@ -350,7 +421,7 @@ func (r *Reader) Next() (*FileHeader, error) {
 
 	// check for encryption
 	if len(h.key) > 0 && len(h.iv) > 0 {
-		br = newAesDecryptReader(br, h.key, h.iv) // decrypt
+		br = newAesDecryptReader(r.pr, h.key, h.iv) // decrypt
 	}
 	r.r = br
 	// check for compression
