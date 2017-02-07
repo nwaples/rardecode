@@ -41,7 +41,7 @@ var (
 
 type byteReader interface {
 	io.Reader
-	io.ByteReader
+	bytes() ([]byte, error)
 }
 
 type limitedReader struct {

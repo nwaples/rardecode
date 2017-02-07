@@ -40,7 +40,7 @@ type decoder50 struct {
 
 func (d *decoder50) version() int { return decode50Ver }
 
-func (d *decoder50) init(r io.ByteReader, reset bool) error {
+func (d *decoder50) init(r byteReader, reset bool) error {
 	d.r = newRarBitReader(r)
 	d.lastBlock = false
 

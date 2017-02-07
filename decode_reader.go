@@ -1,9 +1,6 @@
 package rardecode
 
-import (
-	"errors"
-	"io"
-)
+import "errors"
 
 const (
 	minWindowSize    = 0x40000
@@ -28,9 +25,9 @@ type filterBlock struct {
 
 // decoder is the interface for decoding compressed data
 type decoder interface {
-	init(r io.ByteReader, reset bool) error // initialize decoder for current file
-	fill(dr *decodeReader) error            // fill window with decoded data
-	version() int                           // decoder version
+	init(r byteReader, reset bool) error // initialize decoder for current file
+	fill(dr *decodeReader) error         // fill window with decoded data
+	version() int                        // decoder version
 }
 
 // decodeReader implements io.Reader for decoding compressed data in RAR archives.
@@ -51,7 +48,7 @@ type decodeReader struct {
 	o    int    // offset of bytes to be processed by copyBytes
 }
 
-func (d *decodeReader) init(r io.ByteReader, ver int, winsize uint, reset bool) error {
+func (d *decodeReader) init(r byteReader, ver int, winsize uint, reset bool) error {
 	d.outbuf = nil
 	d.tot = 0
 	d.err = nil

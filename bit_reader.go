@@ -40,13 +40,13 @@ func (l *limitedBitReader) unreadBits(n uint) {
 // rarBitReader wraps an io.ByteReader to perform various bit and byte
 // reading utility functions used in RAR file processing.
 type rarBitReader struct {
-	r io.ByteReader
+	r byteReader
 	v int
 	n uint
 	b []byte
 }
 
-func (r *rarBitReader) reset(br io.ByteReader) {
+func (r *rarBitReader) reset(br byteReader) {
 	r.r = br
 	r.n = 0
 	r.v = 0
@@ -106,7 +106,11 @@ func (r *rarBitReader) ReadByte() (byte, error) {
 		if r.r == nil {
 			return 0, io.EOF
 		}
-		return r.r.ReadByte()
+		var err error
+		r.b, err = r.r.bytes()
+		if err != nil {
+			return 0, err
+		}
 	}
 	c := r.b[0]
 	r.b = r.b[1:]
@@ -130,6 +134,6 @@ func (r *rarBitReader) readFull(p []byte) error {
 	return nil
 }
 
-func newRarBitReader(r io.ByteReader) *rarBitReader {
+func newRarBitReader(r byteReader) *rarBitReader {
 	return &rarBitReader{r: r}
 }
