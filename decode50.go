@@ -23,8 +23,8 @@ var (
 // a header containing block length and optional code length tables to initialize
 // the huffman decoders with.
 type decoder50 struct {
-	r          io.ByteReader
-	br         bitReader // bit reader for current data block
+	r          *rarBitReader
+	br         *limitedBitReader // bit reader for current data block
 	codeLength [tableSize5]byte
 
 	lastBlock bool // current block is last block in compressed file
@@ -41,7 +41,7 @@ type decoder50 struct {
 func (d *decoder50) version() int { return decode50Ver }
 
 func (d *decoder50) init(r io.ByteReader, reset bool) error {
-	d.r = r
+	d.r = newRarBitReader(r)
 	d.lastBlock = false
 
 	if reset {
@@ -61,6 +61,7 @@ func (d *decoder50) init(r io.ByteReader, reset bool) error {
 }
 
 func (d *decoder50) readBlockHeader() error {
+	d.r.alignByte() // new block starts on byte boundary
 	flags, err := d.r.ReadByte()
 	if err != nil {
 		return err
@@ -93,7 +94,7 @@ func (d *decoder50) readBlockHeader() error {
 	blockBits += (blockBytes - 1) * 8
 
 	// create bit reader for block
-	d.br = limitBitReader(newRarBitReader(d.r), blockBits, errDecoderOutOfData)
+	d.br = limitBitReader(d.r, blockBits, errDecoderOutOfData)
 	d.lastBlock = flags&0x40 > 0
 
 	if flags&0x80 > 0 {
