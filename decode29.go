@@ -12,9 +12,9 @@ const (
 
 var (
 	// Errors marking the end of the decoding block and/or file
-	endOfFile         = errors.New("rardecode: end of file")
-	endOfBlock        = errors.New("rardecode: end of block")
-	endOfBlockAndFile = errors.New("rardecode: end of block and file")
+	errEndOfFile         = errors.New("rardecode: end of file")
+	errEndOfBlock        = errors.New("rardecode: end of block")
+	errEndOfBlockAndFile = errors.New("rardecode: end of block and file")
 )
 
 // decoder29 implements the decoder interface for RAR 3.0 compression (unpack version 29)
@@ -238,15 +238,15 @@ func (d *decoder29) fill(dr *decodeReader) error {
 		switch err {
 		case nil:
 			continue
-		case endOfBlock:
+		case errEndOfBlock:
 			err = d.readBlockHeader()
 			if err == nil {
 				continue
 			}
-		case endOfFile:
+		case errEndOfFile:
 			d.eof = true
 			err = io.EOF
-		case endOfBlockAndFile:
+		case errEndOfBlockAndFile:
 			d.eof = true
 			d.decode = nil // clear decoder, it will be setup by next init()
 			err = io.EOF

@@ -98,9 +98,9 @@ func (d *ppm29Decoder) decode(dr *decodeReader) ([]byte, error) {
 
 	switch c {
 	case 0:
-		return nil, endOfBlock
+		return nil, errEndOfBlock
 	case 2:
-		return nil, endOfBlockAndFile
+		return nil, errEndOfBlockAndFile
 	case 3:
 		return d.readFilterData()
 	case 4:
