@@ -115,27 +115,6 @@ func (cr *cipherBlockReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// ReadByte returns the next decrypted byte.
-func (cr *cipherBlockReader) ReadByte() (byte, error) {
-	bs := cr.mode.BlockSize()
-	if len(cr.outbuf) == 0 {
-		for len(cr.inbuf) == 0 {
-			var err error
-			cr.inbuf, err = cr.r.blocks(bs)
-			if err != nil {
-				return 0, err
-			}
-		}
-		// decrypt one block and save to outbuf
-		cr.outbuf = cr.inbuf[:bs]
-		cr.inbuf = cr.inbuf[bs:]
-		cr.mode.CryptBlocks(cr.outbuf, cr.outbuf)
-	}
-	c := cr.outbuf[0]
-	cr.outbuf = cr.outbuf[1:]
-	return c, nil
-}
-
 // bytes returns a byte slice of decrypted data.
 func (cr *cipherBlockReader) bytes() ([]byte, error) {
 	if len(cr.outbuf) > 0 {

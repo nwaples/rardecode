@@ -301,17 +301,3 @@ func (d *decodeReader) Read(p []byte) (int, error) {
 	d.outbuf = d.outbuf[n:]
 	return n, err
 }
-
-// ReadByte decodes and returns the next byte.
-func (d *decodeReader) ReadByte() (byte, error) {
-	var err error
-	if len(d.outbuf) == 0 {
-		d.outbuf, err = d.bytes()
-		if err != nil {
-			return 0, err
-		}
-	}
-	var c byte
-	c, d.outbuf = d.outbuf[0], d.outbuf[1:]
-	return c, err
-}
