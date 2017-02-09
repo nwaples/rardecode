@@ -25,9 +25,9 @@ const (
 )
 
 const (
-	maxPassword = 128
+	maxPassword = int(128)
 
-	decodeNoneVer = iota
+	_ = iota
 	decode29Ver
 	decode50Ver
 )
@@ -271,7 +271,7 @@ func (f *packedFileReader) Read(p []byte) (int, error) {
 		if f.h == nil || f.h.last {
 			return 0, io.EOF // last block so end of file
 		}
-		if err := f.nextBlockInFile(); err != nil {
+		if err = f.nextBlockInFile(); err != nil {
 			return 0, err
 		}
 		n, err = f.r.Read(p) // read new block data
@@ -349,7 +349,7 @@ func (cr *checksumReader) eofError() error {
 	sum := cr.hash.Sum(nil)
 	if len(h.hashKey) > 0 {
 		mac := hmac.New(sha256.New, h.hashKey)
-		mac.Write(sum)
+		_, _ = mac.Write(sum) // ignore error, should always succeed
 		sum = mac.Sum(sum[:0])
 		if len(h.sum) == 4 {
 			// CRC32

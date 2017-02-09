@@ -89,7 +89,7 @@ func (d *lz29Decoder) readFilterData() (b []byte, err error) {
 		return nil, err
 	}
 
-	n := (int(flags) & 7) + 1
+	n := flags&7 + 1
 	switch n {
 	case 7:
 		n, err = d.br.readBits(8)
@@ -152,14 +152,15 @@ func (d *lz29Decoder) decode(dr *decodeReader) ([]byte, error) {
 		copy(d.offset[1:i+1], d.offset[:i])
 		d.offset[0] = offset
 
-		i, err := d.lengthDecoder.readSym(d.br)
+		i, err = d.lengthDecoder.readSym(d.br)
 		if err != nil {
 			return nil, err
 		}
 		d.length = lengthBase[i] + 2
 		bits := lengthExtraBits[i]
 		if bits > 0 {
-			n, err := d.br.readBits(bits)
+			var n int
+			n, err = d.br.readBits(bits)
 			if err != nil {
 				return nil, err
 			}
@@ -171,7 +172,8 @@ func (d *lz29Decoder) decode(dr *decodeReader) ([]byte, error) {
 		offset := shortOffsetBase[i] + 1
 		bits := shortOffsetExtraBits[i]
 		if bits > 0 {
-			n, err := d.br.readBits(bits)
+			var n int
+			n, err = d.br.readBits(bits)
 			if err != nil {
 				return nil, err
 			}
@@ -185,7 +187,8 @@ func (d *lz29Decoder) decode(dr *decodeReader) ([]byte, error) {
 		d.length = lengthBase[i] + 3
 		bits := lengthExtraBits[i]
 		if bits > 0 {
-			n, err := d.br.readBits(bits)
+			var n int
+			n, err = d.br.readBits(bits)
 			if err != nil {
 				return nil, err
 			}

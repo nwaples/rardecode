@@ -14,9 +14,9 @@ import (
 
 const (
 	// block types
-	block5Arc     = 1
-	block5File    = 2
-	block5Service = 3
+	block5Arc  = 1
+	block5File = 2
+	// block5Service = 3
 	block5Encrypt = 4
 	block5End     = 5
 
@@ -114,8 +114,8 @@ func calcKeys50(pass, salt []byte, kdfCount int) [][]byte {
 	}
 
 	prf := hmac.New(sha256.New, pass)
-	prf.Write(salt)
-	prf.Write([]byte{0, 0, 0, 1})
+	_, _ = prf.Write(salt)
+	_, _ = prf.Write([]byte{0, 0, 0, 1})
 
 	t := prf.Sum(nil)
 	u := append([]byte(nil), t...)
@@ -125,7 +125,7 @@ func calcKeys50(pass, salt []byte, kdfCount int) [][]byte {
 	for i, iter := range []int{kdfCount, 16, 16} {
 		for iter > 0 {
 			prf.Reset()
-			prf.Write(u)
+			_, _ = prf.Write(u)
 			u = prf.Sum(u[:0])
 			for j := range u {
 				t[j] ^= u[j]
@@ -343,7 +343,7 @@ func (a *archive50) readBlockHeader(r sliceReader) (*blockHeader50, error) {
 	}
 
 	// check header crc
-	hash.Write(b[4:])
+	_, _ = hash.Write(b[4:])
 	if crc != hash.Sum32() {
 		return nil, errBadHeaderCrc
 	}

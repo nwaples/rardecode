@@ -81,7 +81,8 @@ func (d *decoder50) readBlockHeader() error {
 	blockBytes := 0
 	sum := 0x5a ^ flags
 	for i := byte(0); i < bytecount; i++ {
-		n, err := d.r.ReadByte()
+		var n byte
+		n, err = d.r.ReadByte()
 		if err != nil {
 			return err
 		}

@@ -86,8 +86,9 @@ func calcAes30Params(pass []uint16, salt []byte) (key, iv []byte) {
 	iv = make([]byte, 16)
 	s := make([]byte, 0, hash.Size())
 	for i := 0; i < hashRounds; i++ {
-		hash.Write(p)
-		hash.Write([]byte{byte(i), byte(i >> 8), byte(i >> 16)})
+		// ignore hash Write errors, should always succeed
+		_, _ = hash.Write(p)
+		_, _ = hash.Write([]byte{byte(i), byte(i >> 8), byte(i >> 16)})
 		if i%(hashRounds/16) == 0 {
 			s = hash.Sum(s[:0])
 			iv[i/(hashRounds/16)] = s[4*4+3]
@@ -367,7 +368,7 @@ func (a *archive15) readBlockHeader(r sliceReader) (*blockHeader15, error) {
 		return nil, err
 	}
 	hash := crc32.NewIEEE()
-	hash.Write(h.data[2:])
+	_, _ = hash.Write(h.data[2:]) // Write should always succeed
 	if crc != uint16(hash.Sum32()) {
 		return nil, errBadHeaderCrc
 	}

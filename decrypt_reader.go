@@ -73,7 +73,6 @@ type cipherBlockReader struct {
 	mode   cipher.BlockMode
 	inbuf  []byte // raw input blocks not yet decrypted
 	outbuf []byte // output buffer used when output slice < block size
-	err    error
 }
 
 // Read reads and decrypts data into p.

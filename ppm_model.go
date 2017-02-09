@@ -293,12 +293,12 @@ func (c *context) expandStates() []state {
 type subAllocator struct {
 	// memory for allocation is split into two heaps
 
+	glueCount     int
 	heap1MaxBytes int32 // maximum bytes available in heap1
 	heap1Lo       int32 // heap1 bottom in number of bytes
 	heap1Hi       int32 // heap1 top in number of bytes
 	heap2Lo       int32 // heap2 bottom index in states
 	heap2Hi       int32 // heap2 top index in states
-	glueCount     int
 
 	// Each freeList entry contains an index into states for the beginning
 	// of a free block. The first state in that block may contain an index

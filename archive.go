@@ -303,7 +303,10 @@ func (v *volume) next() (*fileBlockHeader, error) {
 			return h, err
 		}
 
-		v.f.Close()
+		err = v.f.Close()
+		if err != nil {
+			return nil, err
+		}
 		v.nextVolName()
 		v.f, err = os.Open(v.dir + v.file) // Open next volume file
 		if err != nil {
@@ -345,7 +348,7 @@ func openVolume(name, password string) (*volume, error) {
 	v.br = bufio.NewReader(v.f)
 	v.fbr, err = newFileBlockReader(v.br, password)
 	if err != nil {
-		v.f.Close()
+		_ = v.f.Close() // can only return one error so ignore Close error
 		return nil, err
 	}
 	return v, nil
