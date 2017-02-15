@@ -24,15 +24,12 @@ var (
 // block marker in the data.
 type decoder29 struct {
 	br      *rarBitReader
+	hdrRead bool       // block header has been read
+	isPPM   bool       // current block is PPM
 	eof     bool       // at file eof
 	fnum    int        // current filter number (index into filters)
 	flen    []int      // filter block length history
 	filters []v3Filter // list of current filters used by archive encoding
-
-	// current decode function (lz or ppm).
-	// When called it should perform a single decode operation, and either apply the
-	// data to the window or return they raw bytes for a filter.
-	decode func(dr *decodeReader) ([]byte, error)
 
 	lz  lz29Decoder  // lz decoder
 	ppm ppm29Decoder // ppm decoder
@@ -52,9 +49,9 @@ func (d *decoder29) init(r byteReader, reset bool) error {
 		d.initFilters()
 		d.lz.reset()
 		d.ppm.reset()
-		d.decode = nil
+		d.hdrRead = false
 	}
-	if d.decode == nil {
+	if !d.hdrRead {
 		return d.readBlockHeader()
 	}
 	return nil
@@ -205,18 +202,18 @@ func (d *decoder29) readBlockHeader() error {
 	n, err := d.br.readBits(1)
 	if err == nil {
 		if n > 0 {
-			d.decode = d.ppm.decode
+			d.isPPM = true
 			err = d.ppm.init(d.br)
 		} else {
-			d.decode = d.lz.decode
+			d.isPPM = false
 			err = d.lz.init(d.br)
 		}
 	}
 	if err == io.EOF {
 		err = errDecoderOutOfData
 	}
+	d.hdrRead = true
 	return err
-
 }
 
 func (d *decoder29) fill(dr *decodeReader) error {
@@ -225,7 +222,13 @@ func (d *decoder29) fill(dr *decodeReader) error {
 	}
 
 	for dr.notFull() {
-		b, err := d.decode(dr) // perform a single decode operation
+		var b []byte
+		var err error
+		if d.isPPM {
+			b, err = d.ppm.decode(dr)
+		} else {
+			b, err = d.lz.decode(dr)
+		}
 		if len(b) > 0 && err == nil {
 			// parse raw data for filter and add to list of filters
 			var f *filterBlock
@@ -248,7 +251,7 @@ func (d *decoder29) fill(dr *decodeReader) error {
 			err = io.EOF
 		case errEndOfBlockAndFile:
 			d.eof = true
-			d.decode = nil // clear decoder, it will be setup by next init()
+			d.hdrRead = false
 			err = io.EOF
 		case io.EOF:
 			err = errDecoderOutOfData
