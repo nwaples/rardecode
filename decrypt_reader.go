@@ -134,6 +134,12 @@ func (cr *cipherBlockReader) bytes() ([]byte, error) {
 	return b, nil
 }
 
+func (cr *cipherBlockReader) skip() error {
+	cr.inbuf = nil
+	cr.outbuf = nil
+	return cr.r.skip()
+}
+
 // newAesDecryptReader returns a cipherBlockReader that decrypts input from a given io.Reader using AES.
 // It will panic if the provided key is invalid.
 func newAesDecryptReader(r *packedFileReader, key, iv []byte) *cipherBlockReader {

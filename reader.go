@@ -8,7 +8,6 @@ import (
 	"errors"
 	"hash"
 	"io"
-	"io/ioutil"
 	"os"
 	"time"
 )
@@ -42,6 +41,7 @@ var (
 type byteReader interface {
 	io.Reader
 	bytes() ([]byte, error)
+	skip() error
 }
 
 type limitedReader struct {
@@ -72,6 +72,13 @@ func (l *limitedReader) bytes() ([]byte, error) {
 	}
 	l.n -= int64(len(b))
 	return b, err
+}
+
+func (l *limitedReader) skip() error {
+	// skip using underlying reader as there may be padding after
+	// the end of the current limitedReader.
+	l.n = 0
+	return l.r.skip()
 }
 
 type limitedByteReader struct {
@@ -391,13 +398,15 @@ func (cr *checksumReader) bytes() ([]byte, error) {
 	return b, cr.eofError()
 }
 
+func (cr *checksumReader) skip() error {
+	return cr.r.skip()
+}
+
 // Reader provides sequential access to files in a RAR archive.
 type Reader struct {
-	r      byteReader // reader for current unpacked file
-	v      *volume
-	pr     *packedFileReader // reader for current packed file
-	dr     decodeReader      // reader for decoding and filters if file is compressed
-	solidr io.Reader         // reader for solid file
+	r  byteReader // reader for current unpacked file
+	v  *volume
+	dr *decodeReader // reader for decoding and filters if file is compressed
 }
 
 // Read reads from the current file in the RAR archive.
@@ -428,49 +437,41 @@ func (r *Reader) WriteTo(w io.Writer) (int64, error) {
 
 // Next advances to the next file in the archive.
 func (r *Reader) Next() (*FileHeader, error) {
-	var err error
-	if r.solidr != nil {
-		// solid files must be read fully to update decoder information
-		if _, err = io.Copy(ioutil.Discard, r.solidr); err != nil {
-			return nil, err
-		}
-	}
-	if r.pr != nil {
-		if err = r.pr.skip(); err != nil {
+	if r.r != nil {
+		if err := r.r.skip(); err != nil {
 			return nil, err
 		}
 	}
 
-	r.pr, err = newPackedFileReader(r.v) // open next file
+	pr, err := newPackedFileReader(r.v) // open next file
 	if err != nil {
 		return nil, err
 	}
-	h := r.pr.h
-	r.solidr = nil
+	h := pr.h
 
-	r.r = r.pr // start with packed file reader
+	r.r = pr // start with packed file reader
 
 	// check for encryption
 	if len(h.key) > 0 && len(h.iv) > 0 {
-		r.r = newAesDecryptReader(r.pr, h.key, h.iv) // decrypt
+		r.r = newAesDecryptReader(pr, h.key, h.iv) // decrypt
 	}
 	// check for compression
 	if h.decVer > 0 {
-		err = r.dr.init(r.r, h.decVer, h.winSize, !h.solid)
+		if r.dr == nil {
+			r.dr = new(decodeReader)
+		}
+		err = r.dr.init(r.r, h.decVer, h.winSize, !h.solid, h.arcSolid)
 		if err != nil {
 			return nil, err
 		}
-		r.r = &r.dr
-		if h.arcSolid {
-			r.solidr = r.r
-		}
+		r.r = r.dr
 	}
 	if h.UnPackedSize >= 0 && !h.UnKnownSize {
 		// Limit reading to UnPackedSize as there may be padding
 		r.r = &limitedReader{r.r, h.UnPackedSize, errShortFile}
 	}
 	if h.hash != nil {
-		r.r = &checksumReader{r.r, h.hash, r.pr}
+		r.r = &checksumReader{r.r, h.hash, pr}
 	}
 	fh := new(FileHeader)
 	*fh = h.FileHeader

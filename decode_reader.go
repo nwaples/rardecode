@@ -1,6 +1,9 @@
 package rardecode
 
-import "errors"
+import (
+	"errors"
+	"io"
+)
 
 const (
 	minWindowSize    = 0x40000
@@ -38,6 +41,8 @@ type decodeReader struct {
 	fl     []*filterBlock // list of filters each with offset relative to previous in list
 	dec    decoder        // decoder being used to unpack file
 	err    error          // current decoder error output
+	solid  bool           // archive is solid
+	br     byteReader
 
 	win  []byte // sliding window buffer
 	size int    // win length
@@ -48,13 +53,15 @@ type decodeReader struct {
 	o    int    // offset of bytes to be processed by copyBytes
 }
 
-func (d *decodeReader) init(r byteReader, ver int, winsize uint, reset bool) error {
+func (d *decodeReader) init(r byteReader, ver int, winsize uint, reset, solid bool) error {
 	d.outbuf = nil
 	d.tot = 0
 	d.err = nil
 	if reset {
 		d.fl = nil
 	}
+	d.br = r
+	d.solid = solid
 
 	// initialize window
 	size := 1 << winsize
@@ -300,4 +307,21 @@ func (d *decodeReader) Read(p []byte) (int, error) {
 	n := copy(p, d.outbuf)
 	d.outbuf = d.outbuf[n:]
 	return n, err
+}
+
+func (d *decodeReader) skip() error {
+	if d.solid {
+		for {
+			_, err := d.bytes()
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				return err
+			}
+		}
+	} else {
+		d.outbuf = nil
+	}
+	return d.br.skip()
 }
