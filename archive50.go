@@ -205,7 +205,7 @@ func (a *archive50) parseFileEncryptionRecord(b readBuf, f *fileBlockHeader) err
 	if len(b) < 16 {
 		return errCorruptEncrypt
 	}
-	f.iv = b.bytes(16)
+	f.iv = append([]byte(nil), b.bytes(16)...)
 
 	if flags&file5EncCheckPresent > 0 {
 		if err := checkPassword(&b, keys); err != nil {
