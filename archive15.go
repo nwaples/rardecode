@@ -74,6 +74,12 @@ type archive15 struct {
 	}
 }
 
+func (a *archive15) clone() fileBlockReader {
+	na := new(archive15)
+	*na = *a
+	return na
+}
+
 // Calculates the key and iv for AES decryption given a password and salt.
 func calcAes30Params(pass []uint16, salt []byte) (key, iv []byte) {
 	p := make([]byte, 0, len(pass)*2+len(salt))
@@ -239,7 +245,7 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 	f.first = h.flags&fileSplitBefore == 0
 	f.last = h.flags&fileSplitAfter == 0
 
-	f.solid = h.flags&fileSolid > 0
+	f.Solid = h.flags&fileSolid > 0
 	f.arcSolid = a.solid
 	f.IsDir = h.flags&fileWindowMask == fileWindowMask
 	if !f.IsDir {

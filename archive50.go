@@ -99,6 +99,12 @@ type archive50 struct {
 	}
 }
 
+func (a *archive50) clone() fileBlockReader {
+	na := new(archive50)
+	*na = *a
+	return na
+}
+
 // calcKeys50 calculates the keys used in RAR 5 archive processing.
 // The returned slice of byte slices contains 3 keys.
 // Key 0 is used for block or file decryption.
@@ -247,7 +253,7 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 	}
 
 	flags = h.data.uvarint() // compression flags
-	f.solid = flags&0x0040 > 0
+	f.Solid = flags&0x0040 > 0
 	f.arcSolid = a.solid
 	f.winSize = uint(flags&0x3C00)>>10 + 17
 	method := (flags >> 7) & 7 // compression method (0 == none)

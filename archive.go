@@ -35,6 +35,7 @@ var (
 	errArchiveContinues   = errors.New("rardecode: archive continues in next volume")
 	errArchiveEnd         = errors.New("rardecode: archive end reached")
 	errDecoderOutOfData   = errors.New("rardecode: decoder expected more data than is in packed file")
+	errOffsetNotSupported = errors.New("rardecode: volume doesn't support file offset")
 
 	reDigits = regexp.MustCompile(`\d+`)
 )
@@ -204,6 +205,25 @@ type volume struct {
 	old  bool          // uses old naming scheme
 }
 
+func (v *volume) clone() *volume {
+	nv := &volume{dir: v.dir, file: v.file, num: v.num, old: v.old}
+	nv.fbr = v.fbr.clone()
+	return nv
+}
+
+func (v *volume) offset() (int64, error) {
+	// offset should only be called on volumes with v.f set.
+	if v.f == nil {
+		return 0, errOffsetNotSupported
+	}
+	n, err := v.f.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return 0, err
+	}
+	n -= int64(v.br.Buffered())
+	return n, nil
+}
+
 // nextVolName updates name to the next filename in the archive.
 func (v *volume) nextVolName() {
 	if v.num == 0 {
@@ -284,6 +304,9 @@ func (v *volume) nextVolName() {
 }
 
 func (v *volume) next() (*fileBlockHeader, error) {
+	if v.fbr == nil {
+		return nil, io.EOF
+	}
 	for {
 		var atEOF bool
 
