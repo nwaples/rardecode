@@ -31,8 +31,8 @@ type decoder29 struct {
 	flen    []int      // filter block length history
 	filters []v3Filter // list of current filters used by archive encoding
 
-	lz  lz29Decoder  // lz decoder
-	ppm ppm29Decoder // ppm decoder
+	lz  *lz29Decoder  // lz decoder
+	ppm *ppm29Decoder // ppm decoder
 }
 
 func (d *decoder29) version() int { return decode29Ver }
@@ -47,8 +47,12 @@ func (d *decoder29) init(r byteReader, reset bool) error {
 	d.eof = false
 	if reset {
 		d.initFilters()
-		d.lz.reset()
-		d.ppm.reset()
+		if d.lz != nil {
+			d.lz.reset()
+		}
+		if d.ppm != nil {
+			d.ppm.reset()
+		}
 		d.hdrRead = false
 	}
 	if !d.hdrRead {
@@ -203,9 +207,15 @@ func (d *decoder29) readBlockHeader() error {
 	if err == nil {
 		if n > 0 {
 			d.isPPM = true
+			if d.ppm == nil {
+				d.ppm = new(ppm29Decoder)
+			}
 			err = d.ppm.init(d.br)
 		} else {
 			d.isPPM = false
+			if d.lz == nil {
+				d.lz = new(lz29Decoder)
+			}
 			err = d.lz.init(d.br)
 		}
 	}
