@@ -145,54 +145,48 @@ func calcKeys50(pass, salt []byte, kdfCount int) [][]byte {
 	for i, v := range pwcheck[pwCheckSize:] {
 		pwcheck[i&(pwCheckSize-1)] ^= v
 	}
-	keys[2] = pwcheck[:pwCheckSize]
+	pwcheck = pwcheck[:pwCheckSize]
+	// add checksum to end of pwcheck
+	sum := sha256.Sum256(pwcheck)
+	pwcheck = append(pwcheck, sum[:4]...)
+	keys[2] = pwcheck
 
 	return keys
 }
 
-// getKeys reads kdfcount and salt from b and returns the corresponding encryption keys.
-func (a *archive50) getKeys(b *readBuf) (keys [][]byte, err error) {
-	if len(*b) < 17 {
-		return nil, errCorruptEncrypt
-	}
-	// read kdf count and salt
-	kdfCount := int(b.byte())
+// getKeys returns the the corresponding encryption keys for the given kdfcount and salt.
+// It will check the password if check is provided.
+func (a *archive50) getKeys(kdfCount int, salt, check []byte) ([][]byte, error) {
+	var keys [][]byte
+
 	if kdfCount > maxKdfCount {
 		return nil, errCorruptEncrypt
 	}
 	kdfCount = 1 << uint(kdfCount)
-	salt := b.bytes(16)
 
 	// check cache of keys for match
 	for _, v := range a.keyCache {
 		if kdfCount == v.kdfCount && bytes.Equal(salt, v.salt) {
-			return v.keys, nil
+			keys = v.keys
+			break
 		}
 	}
-	// not found, calculate keys
-	keys = calcKeys50(a.pass, salt, kdfCount)
+	if keys == nil {
+		// not found, calculate keys
+		keys = calcKeys50(a.pass, salt, kdfCount)
 
-	// store in cache
-	copy(a.keyCache[1:], a.keyCache[:])
-	a.keyCache[0].kdfCount = kdfCount
-	a.keyCache[0].salt = append([]byte(nil), salt...)
-	a.keyCache[0].keys = keys
+		// store in cache
+		copy(a.keyCache[1:], a.keyCache[:])
+		a.keyCache[0].kdfCount = kdfCount
+		a.keyCache[0].salt = append([]byte(nil), salt...)
+		a.keyCache[0].keys = keys
+	}
 
+	// check password
+	if check != nil && !bytes.Equal(check, keys[2]) {
+		return nil, errBadPassword
+	}
 	return keys, nil
-}
-
-// checkPassword calculates if a password is correct given password check data and keys.
-func checkPassword(b *readBuf, keys [][]byte) error {
-	if len(*b) < 12 {
-		return nil // not enough bytes, ignore for the moment
-	}
-	pwcheck := b.bytes(8)
-	sum := b.bytes(4)
-	csum := sha256.Sum256(pwcheck)
-	if bytes.Equal(sum, csum[:len(sum)]) && !bytes.Equal(pwcheck, keys[2]) {
-		return errBadPassword
-	}
-	return nil
 }
 
 // parseFileEncryptionRecord processes the optional file encryption record from a file header.
@@ -201,23 +195,27 @@ func (a *archive50) parseFileEncryptionRecord(b readBuf, f *fileBlockHeader) err
 		return errUnknownEncMethod
 	}
 	flags := b.uvarint()
+	if len(b) < 33 {
+		return errCorruptEncrypt
+	}
+	kdfCount := int(b.byte())
+	salt := b.bytes(16)
+	f.iv = append([]byte(nil), b.bytes(16)...)
 
-	keys, err := a.getKeys(&b)
+	var check []byte
+	if flags&file5EncCheckPresent > 0 {
+		if len(b) < 12 {
+			return errCorruptEncrypt
+		}
+		check = b.bytes(12)
+	}
+
+	keys, err := a.getKeys(kdfCount, salt, check)
 	if err != nil {
 		return err
 	}
 
 	f.key = keys[0]
-	if len(b) < 16 {
-		return errCorruptEncrypt
-	}
-	f.iv = append([]byte(nil), b.bytes(16)...)
-
-	if flags&file5EncCheckPresent > 0 {
-		if err := checkPassword(&b, keys); err != nil {
-			return err
-		}
-	}
 	if flags&file5EncUseMac > 0 {
 		f.hashKey = keys[1]
 	}
@@ -309,14 +307,23 @@ func (a *archive50) parseEncryptionBlock(b readBuf) error {
 		return errUnknownEncMethod
 	}
 	flags := b.uvarint()
-	keys, err := a.getKeys(&b)
+	if len(b) < 17 {
+		return errCorruptEncrypt
+	}
+	kdfCount := int(b.byte())
+	salt := b.bytes(16)
+
+	var check []byte
+	if flags&enc5CheckPresent > 0 {
+		if len(b) < 12 {
+			return errCorruptEncrypt
+		}
+		check = b.bytes(12)
+	}
+
+	keys, err := a.getKeys(kdfCount, salt, check)
 	if err != nil {
 		return err
-	}
-	if flags&enc5CheckPresent > 0 {
-		if err := checkPassword(&b, keys); err != nil {
-			return err
-		}
 	}
 	a.blockKey = keys[0]
 	return nil
