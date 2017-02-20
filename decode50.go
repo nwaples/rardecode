@@ -118,7 +118,7 @@ func (d *decoder50) readBlockHeader() error {
 
 func slotToLength(br bitReader, n int) (int, error) {
 	if n >= 8 {
-		bits := uint(n/4 - 1)
+		bits := uint8(n/4 - 1)
 		n = (4 | (n & 3)) << bits
 		if bits > 0 {
 			b, err := br.readBits(bits)
@@ -230,7 +230,7 @@ func (d *decoder50) decodeSym(dr *decodeReader, sym int) error {
 		if slot < 4 {
 			offset += slot
 		} else {
-			bits := uint(slot/2 - 1)
+			bits := uint8(slot/2 - 1)
 			offset += (2 | (slot & 1)) << bits
 
 			if bits >= 4 {

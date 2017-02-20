@@ -114,13 +114,13 @@ func (h *huffmanDecoder) readSym(r bitReader) (int, error) {
 		v = uint16(n)
 		if v < h.limit[h.quickbits] {
 			i := v >> (maxCodeLength - h.quickbits)
-			r.unreadBits(uint(maxCodeLength - h.quicklen[i]))
+			r.unreadBits(maxCodeLength - h.quicklen[i])
 			return int(h.quicksym[i]), nil
 		}
 
 		for bits = h.min; bits <= maxCodeLength; bits++ {
 			if v < h.limit[bits] {
-				r.unreadBits(uint(maxCodeLength - bits))
+				r.unreadBits(maxCodeLength - bits)
 				break
 			}
 		}

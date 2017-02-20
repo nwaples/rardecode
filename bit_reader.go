@@ -3,8 +3,8 @@ package rardecode
 import "io"
 
 type bitReader interface {
-	readBits(n uint) (int, error) // read n bits of data
-	unreadBits(n uint)            // revert the reading of the last n bits read
+	readBits(n uint8) (int, error) // read n bits of data
+	unreadBits(n uint8)            // revert the reading of the last n bits read
 }
 
 type limitedBitReader struct {
@@ -19,7 +19,7 @@ func limitBitReader(br bitReader, n int, err error) *limitedBitReader {
 	return &limitedBitReader{br, n, err}
 }
 
-func (l *limitedBitReader) readBits(n uint) (int, error) {
+func (l *limitedBitReader) readBits(n uint8) (int, error) {
 	if int(n) > l.n {
 		return 0, io.EOF
 	}
@@ -32,7 +32,7 @@ func (l *limitedBitReader) readBits(n uint) (int, error) {
 	return v, err
 }
 
-func (l *limitedBitReader) unreadBits(n uint) {
+func (l *limitedBitReader) unreadBits(n uint8) {
 	l.n += int(n)
 	l.br.unreadBits(n)
 }
@@ -42,7 +42,7 @@ func (l *limitedBitReader) unreadBits(n uint) {
 type rarBitReader struct {
 	r byteReader
 	v int
-	n uint
+	n uint8
 	b []byte
 }
 
@@ -53,7 +53,7 @@ func (r *rarBitReader) reset(br byteReader) {
 	r.b = nil
 }
 
-func (r *rarBitReader) readBits(n uint) (int, error) {
+func (r *rarBitReader) readBits(n uint8) (int, error) {
 	for n > r.n {
 		c, err := r.ReadByte()
 		if err != nil {
@@ -66,7 +66,7 @@ func (r *rarBitReader) readBits(n uint) (int, error) {
 	return (r.v >> r.n) & ((1 << n) - 1), nil
 }
 
-func (r *rarBitReader) unreadBits(n uint) {
+func (r *rarBitReader) unreadBits(n uint8) {
 	r.n += n
 }
 
