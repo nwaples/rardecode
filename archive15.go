@@ -90,11 +90,13 @@ func calcAes30Params(pass []uint16, salt []byte) (key, iv []byte) {
 
 	hash := sha1.New()
 	iv = make([]byte, 16)
-	s := make([]byte, 0, hash.Size())
+	s := make([]byte, hash.Size())
+	b := s[:3]
 	for i := 0; i < hashRounds; i++ {
 		// ignore hash Write errors, should always succeed
 		_, _ = hash.Write(p)
-		_, _ = hash.Write([]byte{byte(i), byte(i >> 8), byte(i >> 16)})
+		b[0], b[1], b[2] = byte(i), byte(i>>8), byte(i>>16)
+		_, _ = hash.Write(b)
 		if i%(hashRounds/16) == 0 {
 			s = hash.Sum(s[:0])
 			iv[i/(hashRounds/16)] = s[4*4+3]
