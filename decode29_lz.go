@@ -129,122 +129,138 @@ func (d *lz29Decoder) readEndOfBlock() error {
 	return errEndOfFile
 }
 
-func (d *lz29Decoder) decode(dr *decodeReader) ([]byte, error) {
-	sym, err := d.mainDecoder.readSym(d.br)
+func (d *lz29Decoder) decodeLength(dr *decodeReader, i int) error {
+	offset := d.offset[i]
+	copy(d.offset[1:i+1], d.offset[:i])
+	d.offset[0] = offset
+
+	i, err := d.lengthDecoder.readSym(d.br)
 	if err != nil {
-		return nil, err
+		return err
 	}
+	d.length = lengthBase[i] + 2
+	bits := lengthExtraBits[i]
+	if bits > 0 {
+		var n int
+		n, err = d.br.readBits(bits)
+		if err != nil {
+			return err
+		}
+		d.length += n
+	}
+	return nil
+}
+
+func (d *lz29Decoder) decodeShortOffset(dr *decodeReader, i int) error {
+	copy(d.offset[1:], d.offset[:])
+	offset := shortOffsetBase[i] + 1
+	bits := shortOffsetExtraBits[i]
+	if bits > 0 {
+		n, err := d.br.readBits(bits)
+		if err != nil {
+			return err
+		}
+		offset += n
+	}
+	d.offset[0] = offset
+	d.length = 2
+	return nil
+}
+
+func (d *lz29Decoder) decodeOffset(dr *decodeReader, i int) error {
+	d.length = lengthBase[i] + 3
+	bits := lengthExtraBits[i]
+	if bits > 0 {
+		n, err := d.br.readBits(bits)
+		if err != nil {
+			return err
+		}
+		d.length += n
+	}
+
+	var err error
+	i, err = d.offsetDecoder.readSym(d.br)
+	if err != nil {
+		return err
+	}
+	offset := offsetBase[i] + 1
+	bits = offsetExtraBits[i]
 
 	switch {
-	case sym < 256:
-		// literal
-		dr.writeByte(byte(sym))
-		return nil, nil
-	case sym == 256:
-		return nil, d.readEndOfBlock()
-	case sym == 257:
-		return d.readFilterData()
-	case sym == 258:
-		// use previous offset and length
-	case sym < 263:
-		i := sym - 259
-		offset := d.offset[i]
-		copy(d.offset[1:i+1], d.offset[:i])
-		d.offset[0] = offset
-
-		i, err = d.lengthDecoder.readSym(d.br)
-		if err != nil {
-			return nil, err
-		}
-		d.length = lengthBase[i] + 2
-		bits := lengthExtraBits[i]
-		if bits > 0 {
-			var n int
-			n, err = d.br.readBits(bits)
+	case bits >= 4:
+		if bits > 4 {
+			n, err := d.br.readBits(bits - 4)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			d.length += n
+			offset += n << 4
 		}
-	case sym < 271:
-		i := sym - 263
-		copy(d.offset[1:], d.offset[:])
-		offset := shortOffsetBase[i] + 1
-		bits := shortOffsetExtraBits[i]
-		if bits > 0 {
-			var n int
-			n, err = d.br.readBits(bits)
+
+		if d.lowOffsetRepeats > 0 {
+			d.lowOffsetRepeats--
+			offset += d.lowOffset
+		} else {
+			n, err := d.lowOffsetDecoder.readSym(d.br)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			offset += n
-		}
-		d.offset[0] = offset
-
-		d.length = 2
-	default:
-		i := sym - 271
-		d.length = lengthBase[i] + 3
-		bits := lengthExtraBits[i]
-		if bits > 0 {
-			var n int
-			n, err = d.br.readBits(bits)
-			if err != nil {
-				return nil, err
-			}
-			d.length += n
-		}
-
-		i, err = d.offsetDecoder.readSym(d.br)
-		if err != nil {
-			return nil, err
-		}
-		offset := offsetBase[i] + 1
-		bits = offsetExtraBits[i]
-
-		switch {
-		case bits >= 4:
-			if bits > 4 {
-				n, err := d.br.readBits(bits - 4)
-				if err != nil {
-					return nil, err
-				}
-				offset += n << 4
-			}
-
-			if d.lowOffsetRepeats > 0 {
-				d.lowOffsetRepeats--
+			if n == 16 {
+				d.lowOffsetRepeats = 15
 				offset += d.lowOffset
 			} else {
-				n, err := d.lowOffsetDecoder.readSym(d.br)
-				if err != nil {
-					return nil, err
-				}
-				if n == 16 {
-					d.lowOffsetRepeats = 15
-					offset += d.lowOffset
-				} else {
-					offset += n
-					d.lowOffset = n
-				}
+				offset += n
+				d.lowOffset = n
 			}
-		case bits > 0:
-			n, err := d.br.readBits(bits)
-			if err != nil {
-				return nil, err
-			}
-			offset += n
+		}
+	case bits > 0:
+		n, err := d.br.readBits(bits)
+		if err != nil {
+			return err
+		}
+		offset += n
+	}
+
+	if offset >= 0x2000 {
+		d.length++
+		if offset >= 0x40000 {
+			d.length++
+		}
+	}
+	copy(d.offset[1:], d.offset[:])
+	d.offset[0] = offset
+	return nil
+}
+
+// fill window until full, error, filter found or end of block.
+func (d *lz29Decoder) fill(dr *decodeReader) ([]byte, error) {
+	for dr.notFull() {
+		sym, err := d.mainDecoder.readSym(d.br)
+		if err != nil {
+			return nil, err
 		}
 
-		if offset >= 0x2000 {
-			d.length++
-			if offset >= 0x40000 {
-				d.length++
-			}
+		switch {
+		case sym < 256: // literal
+			dr.writeByte(byte(sym))
+			continue
+		case sym == 258: // use previous offset and length
+			dr.copyBytes(d.length, d.offset[0])
+			continue
+		case sym >= 271:
+			err = d.decodeOffset(dr, sym-271)
+		case sym >= 263:
+			err = d.decodeShortOffset(dr, sym-263)
+		case sym >= 259:
+			err = d.decodeLength(dr, sym-259)
+		case sym == 256:
+			return nil, d.readEndOfBlock()
+		default: // sym == 257
+			return d.readFilterData()
 		}
-		copy(d.offset[1:], d.offset[:])
-		d.offset[0] = offset
+		if err != nil {
+			return nil, err
+		}
+		dr.copyBytes(d.length, d.offset[0])
 	}
-	dr.copyBytes(d.length, d.offset[0])
 	return nil, nil
 }

@@ -235,9 +235,9 @@ func (d *decoder29) fill(dr *decodeReader) error {
 		var b []byte
 		var err error
 		if d.isPPM {
-			b, err = d.ppm.decode(dr)
+			b, err = d.ppm.fill(dr)
 		} else {
-			b, err = d.lz.decode(dr)
+			b, err = d.lz.fill(dr)
 		}
 		if len(b) > 0 && err == nil {
 			// parse raw data for filter and add to list of filters

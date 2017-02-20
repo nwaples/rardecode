@@ -85,49 +85,52 @@ func (d *ppm29Decoder) readFilterData() ([]byte, error) {
 	return buf, nil
 }
 
-func (d *ppm29Decoder) decode(dr *decodeReader) ([]byte, error) {
-	c, err := d.m.ReadByte()
-	if err != nil {
-		return nil, err
-	}
-	if c != d.esc {
-		dr.writeByte(c)
-		return nil, nil
-	}
-	c, err = d.m.ReadByte()
-	if err != nil {
-		return nil, err
-	}
+// fill window until full, error, filter found or end of block.
+func (d *ppm29Decoder) fill(dr *decodeReader) ([]byte, error) {
+	for dr.notFull() {
+		c, err := d.m.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		if c != d.esc {
+			dr.writeByte(c)
+			continue
+		}
+		c, err = d.m.ReadByte()
+		if err != nil {
+			return nil, err
+		}
 
-	switch c {
-	case 0:
-		return nil, errEndOfBlock
-	case 2:
-		return nil, errEndOfBlockAndFile
-	case 3:
-		return d.readFilterData()
-	case 4:
-		offset := 0
-		for i := 0; i < 3; i++ {
-			c, err = d.m.ReadByte()
+		switch c {
+		case 0:
+			return nil, errEndOfBlock
+		case 2:
+			return nil, errEndOfBlockAndFile
+		case 3:
+			return d.readFilterData()
+		case 4:
+			offset := 0
+			for i := 0; i < 3; i++ {
+				c, err = d.m.ReadByte()
+				if err != nil {
+					return nil, err
+				}
+				offset = offset<<8 | int(c)
+			}
+			len, err := d.m.ReadByte()
 			if err != nil {
 				return nil, err
 			}
-			offset = offset<<8 | int(c)
+			dr.copyBytes(int(len)+32, offset+2)
+		case 5:
+			len, err := d.m.ReadByte()
+			if err != nil {
+				return nil, err
+			}
+			dr.copyBytes(int(len)+4, 1)
+		default:
+			dr.writeByte(d.esc)
 		}
-		len, err := d.m.ReadByte()
-		if err != nil {
-			return nil, err
-		}
-		dr.copyBytes(int(len)+32, offset+2)
-	case 5:
-		len, err := d.m.ReadByte()
-		if err != nil {
-			return nil, err
-		}
-		dr.copyBytes(int(len)+4, 1)
-	default:
-		dr.writeByte(d.esc)
 	}
 	return nil, nil
 }
