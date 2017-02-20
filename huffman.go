@@ -17,17 +17,17 @@ var (
 )
 
 type huffmanDecoder struct {
-	limit     [maxCodeLength + 1]int
-	pos       [maxCodeLength + 1]int
-	symbol    []int
-	min       uint
-	quickbits uint
-	quicklen  [maxQuickSize]uint
-	quicksym  [maxQuickSize]int
+	limit     [maxCodeLength + 1]uint16
+	pos       [maxCodeLength + 1]uint16
+	symbol    []uint16
+	min       uint8
+	quickbits uint8
+	quicklen  [maxQuickSize]uint8
+	quicksym  [maxQuickSize]uint16
 }
 
 func (h *huffmanDecoder) init(codeLengths []byte) {
-	var count [maxCodeLength + 1]int
+	count := make([]uint16, maxCodeLength+1)
 
 	for _, n := range codeLengths {
 		if n == 0 {
@@ -39,7 +39,7 @@ func (h *huffmanDecoder) init(codeLengths []byte) {
 	h.pos[0] = 0
 	h.limit[0] = 0
 	h.min = 0
-	for i := uint(1); i <= maxCodeLength; i++ {
+	for i := uint8(1); i <= maxCodeLength; i++ {
 		h.limit[i] = h.limit[i-1] + count[i]<<(maxCodeLength-i)
 		h.pos[i] = h.pos[i-1] + count[i-1]
 		if h.min == 0 && h.limit[i] > 0 {
@@ -53,13 +53,13 @@ func (h *huffmanDecoder) init(codeLengths []byte) {
 			h.symbol[i] = 0
 		}
 	} else {
-		h.symbol = make([]int, len(codeLengths))
+		h.symbol = make([]uint16, len(codeLengths))
 	}
 
-	copy(count[:], h.pos[:])
+	copy(count, h.pos[:])
 	for i, n := range codeLengths {
 		if n != 0 {
-			h.symbol[count[n]] = i
+			h.symbol[count[n]] = uint16(i)
 			count[n]++
 		}
 	}
@@ -70,8 +70,8 @@ func (h *huffmanDecoder) init(codeLengths []byte) {
 		h.quickbits = maxQuickBits - 3
 	}
 
-	bits := uint(1)
-	for i := 0; i < 1<<h.quickbits; i++ {
+	bits := uint8(1)
+	for i := uint16(0); i < 1<<h.quickbits; i++ {
 		v := i << (maxCodeLength - h.quickbits)
 
 		for v >= h.limit[bits] && bits < maxCodeLength {
@@ -82,7 +82,7 @@ func (h *huffmanDecoder) init(codeLengths []byte) {
 		dist := v - h.limit[bits-1]
 		dist >>= (maxCodeLength - bits)
 
-		pos := h.pos[bits] + dist
+		pos := int(h.pos[bits]) + int(dist)
 		if pos < len(h.symbol) {
 			h.quicksym[i] = h.symbol[pos]
 		} else {
@@ -92,35 +92,35 @@ func (h *huffmanDecoder) init(codeLengths []byte) {
 }
 
 func (h *huffmanDecoder) readSym(r bitReader) (int, error) {
-	bits := uint(maxCodeLength)
-	v, err := r.readBits(maxCodeLength)
+	var bits uint8
+	var v uint16
+	n, err := r.readBits(maxCodeLength)
 	if err != nil {
 		if err != io.EOF {
 			return 0, err
 		}
 		// fall back to 1 bit at a time if we read past EOF
-		for i := uint(1); i <= maxCodeLength; i++ {
+		for bits = 1; bits <= maxCodeLength; bits++ {
 			b, err := r.readBits(1)
 			if err != nil {
 				return 0, err // not enough bits return error
 			}
-			v |= b << (maxCodeLength - i)
-			if v < h.limit[i] {
-				bits = i
+			v |= uint16(b) << (maxCodeLength - bits)
+			if v < h.limit[bits] {
 				break
 			}
 		}
 	} else {
+		v = uint16(n)
 		if v < h.limit[h.quickbits] {
 			i := v >> (maxCodeLength - h.quickbits)
-			r.unreadBits(maxCodeLength - h.quicklen[i])
-			return h.quicksym[i], nil
+			r.unreadBits(uint(maxCodeLength - h.quicklen[i]))
+			return int(h.quicksym[i]), nil
 		}
 
-		for i, n := range h.limit[h.min:] {
-			if v < n {
-				bits = h.min + uint(i)
-				r.unreadBits(maxCodeLength - bits)
+		for bits = h.min; bits <= maxCodeLength; bits++ {
+			if v < h.limit[bits] {
+				r.unreadBits(uint(maxCodeLength - bits))
 				break
 			}
 		}
@@ -129,12 +129,12 @@ func (h *huffmanDecoder) readSym(r bitReader) (int, error) {
 	dist := v - h.limit[bits-1]
 	dist >>= maxCodeLength - bits
 
-	pos := h.pos[bits] + dist
+	pos := int(h.pos[bits]) + int(dist)
 	if pos > len(h.symbol) {
 		return 0, errHuffDecodeFailed
 	}
 
-	return h.symbol[pos], nil
+	return int(h.symbol[pos]), nil
 }
 
 // readCodeLengthTable reads a new code length table into codeLength from br.
