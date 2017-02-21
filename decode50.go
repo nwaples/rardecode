@@ -153,27 +153,27 @@ func readFilter5Data(br bitReader) (int, error) {
 	return data, nil
 }
 
-func readFilter(br bitReader) (*filterBlock, error) {
+func (d *decoder50) readFilter(dr *decodeReader) error {
 	fb := new(filterBlock)
 	var err error
 
-	fb.offset, err = readFilter5Data(br)
+	fb.offset, err = readFilter5Data(d.br)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	fb.length, err = readFilter5Data(br)
+	fb.length, err = readFilter5Data(d.br)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	ftype, err := br.readBits(3)
+	ftype, err := d.br.readBits(3)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	switch ftype {
 	case 0:
-		n, err := br.readBits(5)
+		n, err := d.br.readBits(5)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		fb.filter = func(buf []byte, offset int64) ([]byte, error) { return filterDelta(n+1, buf) }
 	case 1:
@@ -183,90 +183,77 @@ func readFilter(br bitReader) (*filterBlock, error) {
 	case 3:
 		fb.filter = filterArm
 	default:
-		return nil, errUnknownFilter
+		return errUnknownFilter
 	}
-	return fb, nil
+	return dr.queueFilter(fb)
 }
 
-func (d *decoder50) decodeSym(dr *decodeReader, sym int) error {
-	switch {
-	case sym < 256:
-		// literal
-		dr.writeByte(byte(sym))
-		return nil
-	case sym == 256:
-		f, err := readFilter(d.br)
-		if f != nil {
-			err = dr.queueFilter(f)
-		}
+func (d *decoder50) decodeLength(dr *decodeReader, i int) error {
+	offset := d.offset[i]
+	copy(d.offset[1:i+1], d.offset[:i])
+	d.offset[0] = offset
+
+	sl, err := d.lengthDecoder.readSym(d.br)
+	if err != nil {
 		return err
-	case sym == 257:
-		// use previous offset and length
-	case sym < 262:
-		i := sym - 258
-		offset := d.offset[i]
-		copy(d.offset[1:i+1], d.offset[:i])
-		d.offset[0] = offset
-
-		sl, err := d.lengthDecoder.readSym(d.br)
-		if err != nil {
-			return err
-		}
-		d.length, err = slotToLength(d.br, sl)
-		if err != nil {
-			return err
-		}
-	default:
-		length, err := slotToLength(d.br, sym-262)
-		if err != nil {
-			return err
-		}
-
-		offset := 1
-		slot, err := d.offsetDecoder.readSym(d.br)
-		if err != nil {
-			return err
-		}
-		if slot < 4 {
-			offset += slot
-		} else {
-			bits := uint8(slot/2 - 1)
-			offset += (2 | (slot & 1)) << bits
-
-			if bits >= 4 {
-				if bits > 4 {
-					n, err := d.br.readBits(bits - 4)
-					if err != nil {
-						return err
-					}
-					offset += n << 4
-				}
-				n, err := d.lowoffsetDecoder.readSym(d.br)
-				if err != nil {
-					return err
-				}
-				offset += n
-			} else {
-				n, err := d.br.readBits(bits)
-				if err != nil {
-					return err
-				}
-				offset += n
-			}
-		}
-		if offset > 0x100 {
-			length++
-			if offset > 0x2000 {
-				length++
-				if offset > 0x40000 {
-					length++
-				}
-			}
-		}
-		copy(d.offset[1:], d.offset[:])
-		d.offset[0] = offset
-		d.length = length
 	}
+	d.length, err = slotToLength(d.br, sl)
+	if err == nil {
+		dr.copyBytes(d.length, d.offset[0])
+	}
+	return err
+}
+
+func (d *decoder50) decodeOffset(dr *decodeReader, i int) error {
+	length, err := slotToLength(d.br, i)
+	if err != nil {
+		return err
+	}
+
+	offset := 1
+	slot, err := d.offsetDecoder.readSym(d.br)
+	if err != nil {
+		return err
+	}
+	if slot < 4 {
+		offset += slot
+	} else {
+		bits := uint8(slot/2 - 1)
+		offset += (2 | (slot & 1)) << bits
+
+		if bits >= 4 {
+			if bits > 4 {
+				n, err := d.br.readBits(bits - 4)
+				if err != nil {
+					return err
+				}
+				offset += n << 4
+			}
+			n, err := d.lowoffsetDecoder.readSym(d.br)
+			if err != nil {
+				return err
+			}
+			offset += n
+		} else {
+			n, err := d.br.readBits(bits)
+			if err != nil {
+				return err
+			}
+			offset += n
+		}
+	}
+	if offset > 0x100 {
+		length++
+		if offset > 0x2000 {
+			length++
+			if offset > 0x40000 {
+				length++
+			}
+		}
+	}
+	copy(d.offset[1:], d.offset[:])
+	d.offset[0] = offset
+	d.length = length
 	dr.copyBytes(d.length, d.offset[0])
 	return nil
 }
@@ -275,7 +262,22 @@ func (d *decoder50) fill(dr *decodeReader) error {
 	for dr.notFull() {
 		sym, err := d.mainDecoder.readSym(d.br)
 		if err == nil {
-			err = d.decodeSym(dr, sym)
+			switch {
+			case sym < 256:
+				// literal
+				dr.writeByte(byte(sym))
+				continue
+			case sym >= 262:
+				err = d.decodeOffset(dr, sym-262)
+			case sym >= 258:
+				err = d.decodeLength(dr, sym-258)
+			case sym == 257:
+				// use previous offset and length
+				dr.copyBytes(d.length, d.offset[0])
+				continue
+			default: // sym == 256:
+				err = d.readFilter(dr)
+			}
 		} else if err == io.EOF {
 			// reached end of the block
 			if d.lastBlock {
