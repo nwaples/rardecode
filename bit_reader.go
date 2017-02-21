@@ -21,15 +21,19 @@ func (l *limitedBitReader) readBits(n uint8) (int, error) {
 			// reached bits limit
 			return 0, io.EOF
 		}
-		c, err := l.ReadByte()
-		if err != nil {
-			if err == io.EOF {
-				// io.EOF before we reached bit limit
-				err = l.err
+		if len(l.b) == 0 {
+			var err error
+			l.b, err = l.r.bytes()
+			if err != nil {
+				if err == io.EOF {
+					// io.EOF before we reached bit limit
+					err = l.err
+				}
+				return 0, err
 			}
-			return 0, err
 		}
-		l.v = l.v<<8 | int(c)
+		l.v = l.v<<8 | int(l.b[0])
+		l.b = l.b[1:]
 		l.n += 8
 		l.l -= 8
 		if l.l < 0 {
