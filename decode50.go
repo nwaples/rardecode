@@ -95,7 +95,7 @@ func (d *decoder50) readBlockHeader() error {
 	blockBits += (blockBytes - 1) * 8
 
 	// create bit reader for block
-	d.br = limitBitReader(d.r, blockBits, errDecoderOutOfData)
+	d.br = &limitedBitReader{d.r, blockBits, errDecoderOutOfData}
 	d.lastBlock = flags&0x40 > 0
 
 	if flags&0x80 > 0 {

@@ -7,34 +7,41 @@ type bitReader interface {
 	unreadBits(n uint8)            // revert the reading of the last n bits read
 }
 
+// limitedBitReader is a bitReader that reads from rarBitReader and stops with io.EOF after l bits.
+// If rarBitReader returns an io.EOF before reading l bits, err is returned.
 type limitedBitReader struct {
-	br  bitReader
-	n   int
-	err error // error to return if br returns EOF before all n bits have been read
-}
-
-// limitBitReader returns a bitReader that reads from br and stops with io.EOF after n bits.
-// If br returns an io.EOF before reading n bits, err is returned.
-func limitBitReader(br bitReader, n int, err error) *limitedBitReader {
-	return &limitedBitReader{br, n, err}
+	*rarBitReader
+	l   int
+	err error
 }
 
 func (l *limitedBitReader) readBits(n uint8) (int, error) {
-	if int(n) > l.n {
-		return 0, io.EOF
+	for n > l.n {
+		if l.l == 0 {
+			// reached bits limit
+			return 0, io.EOF
+		}
+		c, err := l.ReadByte()
+		if err != nil {
+			if err == io.EOF {
+				// io.EOF before we reached bit limit
+				err = l.err
+			}
+			return 0, err
+		}
+		l.v = l.v<<8 | int(c)
+		l.n += 8
+		l.l -= 8
+		if l.l < 0 {
+			// overshot, remove the extra bits
+			bits := uint8(-l.l)
+			l.l = 0
+			l.v >>= bits
+			l.n -= bits
+		}
 	}
-	v, err := l.br.readBits(n)
-	if err == nil {
-		l.n -= int(n)
-	} else if err == io.EOF {
-		err = l.err
-	}
-	return v, err
-}
-
-func (l *limitedBitReader) unreadBits(n uint8) {
-	l.n += int(n)
-	l.br.unreadBits(n)
+	l.n -= n
+	return (l.v >> l.n) & ((1 << n) - 1), nil
 }
 
 // rarBitReader wraps an io.ByteReader to perform various bit and byte
