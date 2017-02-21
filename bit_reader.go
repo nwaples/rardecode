@@ -15,6 +15,9 @@ type limitedBitReader struct {
 	err error
 }
 
+// setLimit sets the maximum bit count that can be read.
+func (l *limitedBitReader) setLimit(n int) { l.l = n }
+
 func (l *limitedBitReader) readBits(n uint8) (int, error) {
 	for n > l.n {
 		if l.l == 0 {

@@ -38,7 +38,7 @@ type decoder29 struct {
 func (d *decoder29) version() int { return decode29Ver }
 
 // init intializes the decoder for decoding a new file.
-func (d *decoder29) init(r byteReader, reset bool) error {
+func (d *decoder29) init(r byteReader, reset bool) {
 	if d.br == nil {
 		d.br = newRarBitReader(r)
 	} else {
@@ -55,10 +55,6 @@ func (d *decoder29) init(r byteReader, reset bool) error {
 		}
 		d.hdrRead = false
 	}
-	if !d.hdrRead {
-		return d.readBlockHeader()
-	}
-	return nil
 }
 
 func (d *decoder29) initFilters() {
@@ -232,8 +228,13 @@ func (d *decoder29) fill(dr *decodeReader) error {
 	}
 
 	for dr.notFull() {
-		var b []byte
 		var err error
+		if !d.hdrRead {
+			if err = d.readBlockHeader(); err != nil {
+				return err
+			}
+		}
+		var b []byte
 		if d.isPPM {
 			b, err = d.ppm.fill(dr)
 		} else {
@@ -252,10 +253,8 @@ func (d *decoder29) fill(dr *decodeReader) error {
 		case nil:
 			continue
 		case errEndOfBlock:
-			err = d.readBlockHeader()
-			if err == nil {
-				continue
-			}
+			d.hdrRead = false
+			continue
 		case errEndOfFile:
 			d.eof = true
 			err = io.EOF

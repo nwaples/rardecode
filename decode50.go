@@ -40,7 +40,7 @@ type decoder50 struct {
 
 func (d *decoder50) version() int { return decode50Ver }
 
-func (d *decoder50) init(r byteReader, reset bool) error {
+func (d *decoder50) init(r byteReader, reset bool) {
 	d.r = newRarBitReader(r)
 	d.lastBlock = false
 
@@ -53,11 +53,7 @@ func (d *decoder50) init(r byteReader, reset bool) error {
 			d.codeLength[i] = 0
 		}
 	}
-	err := d.readBlockHeader()
-	if err == io.EOF {
-		return errDecoderOutOfData
-	}
-	return err
+	d.br = &limitedBitReader{d.r, 0, errDecoderOutOfData}
 }
 
 func (d *decoder50) readBlockHeader() error {
@@ -94,8 +90,8 @@ func (d *decoder50) readBlockHeader() error {
 	}
 	blockBits += (blockBytes - 1) * 8
 
-	// create bit reader for block
-	d.br = &limitedBitReader{d.r, blockBits, errDecoderOutOfData}
+	// reset the bits limit
+	d.br.setLimit(blockBits)
 	d.lastBlock = flags&0x40 > 0
 
 	if flags&0x80 > 0 {
