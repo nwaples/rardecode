@@ -412,19 +412,29 @@ func (cr *checksumReader) skip() error {
 type Reader struct {
 	r  byteReader // reader for current unpacked file
 	v  *volume
-	dr *decodeReader // reader for decoding and filters if file is compressed
+	dr *decodeReader    // reader for decoding and filters if file is compressed
+	h  *fileBlockHeader // header for current file
 }
 
 // Read reads from the current file in the RAR archive.
 func (r *Reader) Read(p []byte) (int, error) {
 	if r.r == nil {
-		return 0, io.EOF
+		err := r.nextFile(r.h)
+		if err != nil {
+			return 0, err
+		}
 	}
 	return r.r.Read(p)
 }
 
 // WriteTo implements io.WriterTo.
 func (r *Reader) WriteTo(w io.Writer) (int64, error) {
+	if r.r == nil {
+		err := r.nextFile(r.h)
+		if err != nil {
+			return 0, err
+		}
+	}
 	var n int64
 	b, err := r.r.bytes()
 	for err == nil {
@@ -443,6 +453,19 @@ func (r *Reader) WriteTo(w io.Writer) (int64, error) {
 
 // Next advances to the next file in the archive.
 func (r *Reader) Next() (*FileHeader, error) {
+	if r.r == nil && r.h != nil {
+		// reader for file being skipped hasnt been setup yet
+		if r.h.decVer > 0 && r.h.arcSolid {
+			// compressed files in a solid archive need to be decompressed fully
+			err := r.nextFile(r.h)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			// all other files, just skip the raw bytes
+			r.r = newPackedFileReader(r.v, r.h)
+		}
+	}
 	if r.r != nil {
 		// skip to end of current reader
 		if err := r.r.skip(); err != nil {
@@ -454,15 +477,17 @@ func (r *Reader) Next() (*FileHeader, error) {
 	if err != nil {
 		return nil, err
 	}
-	// setup next reader
-	err = r.nextFile(h)
-	if err != nil {
-		return nil, err
-	}
+	// Save the header and clear the reader.
+	// The reader will be setup on the next Read() or WriteTo().
+	r.h = h
+	r.r = nil
 	return &h.FileHeader, nil
 }
 
 func (r *Reader) nextFile(h *fileBlockHeader) error {
+	if h == nil {
+		return io.EOF
+	}
 	pr := newPackedFileReader(r.v, h)
 	r.r = pr // start with packed file reader
 
