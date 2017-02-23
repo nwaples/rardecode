@@ -156,12 +156,19 @@ func (r *rarBitReader) unshiftBytes() {
 
 func (r *rarBitReader) readBits(n uint8) (int, error) {
 	for n > r.n {
-		c, err := r.ReadByte()
-		if err != nil {
-			return 0, err
+		if len(r.b) == 0 {
+			var err error
+			r.b, err = r.r.bytes()
+			if err != nil {
+				return 0, err
+			}
 		}
-		r.v = r.v<<8 | int(c)
-		r.n += 8
+		// try to fit as many bits into r.v as possible
+		for len(r.b) > 0 && r.n <= intSize-8 {
+			r.v = r.v<<8 | int(r.b[0])
+			r.b = r.b[1:]
+			r.n += 8
+		}
 	}
 	r.n -= n
 	return (r.v >> r.n) & ((1 << n) - 1), nil
