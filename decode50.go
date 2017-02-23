@@ -23,8 +23,7 @@ var (
 // a header containing block length and optional code length tables to initialize
 // the huffman decoders with.
 type decoder50 struct {
-	r          *rarBitReader
-	br         *limitedBitReader // bit reader for current data block
+	br         rar5BitReader // bit reader for current data block
 	codeLength [tableSize5]byte
 
 	lastBlock bool // current block is last block in compressed file
@@ -41,7 +40,7 @@ type decoder50 struct {
 func (d *decoder50) version() int { return decode50Ver }
 
 func (d *decoder50) init(r byteReader, reset bool) {
-	d.r = newRarBitReader(r)
+	d.br.reset(r)
 	d.lastBlock = false
 
 	if reset {
@@ -53,12 +52,10 @@ func (d *decoder50) init(r byteReader, reset bool) {
 			d.codeLength[i] = 0
 		}
 	}
-	d.br = &limitedBitReader{d.r, 0, errDecoderOutOfData}
 }
 
 func (d *decoder50) readBlockHeader() error {
-	d.r.alignByte() // new block starts on byte boundary
-	flags, err := d.r.ReadByte()
+	flags, err := d.br.ReadByte()
 	if err != nil {
 		return err
 	}
@@ -68,7 +65,7 @@ func (d *decoder50) readBlockHeader() error {
 		return errCorruptDecodeHeader
 	}
 
-	hsum, err := d.r.ReadByte()
+	hsum, err := d.br.ReadByte()
 	if err != nil {
 		return err
 	}
@@ -78,7 +75,7 @@ func (d *decoder50) readBlockHeader() error {
 	sum := 0x5a ^ flags
 	for i := byte(0); i < bytecount; i++ {
 		var n byte
-		n, err = d.r.ReadByte()
+		n, err = d.br.ReadByte()
 		if err != nil {
 			return err
 		}
@@ -97,7 +94,7 @@ func (d *decoder50) readBlockHeader() error {
 	if flags&0x80 > 0 {
 		// read new code length tables and reinitialize huffman decoders
 		cl := d.codeLength[:]
-		err = readCodeLengthTable(d.br, cl, false)
+		err = readCodeLengthTable(&d.br, cl, false)
 		if err != nil {
 			return err
 		}
@@ -153,11 +150,11 @@ func (d *decoder50) readFilter(dr *decodeReader) error {
 	fb := new(filterBlock)
 	var err error
 
-	fb.offset, err = readFilter5Data(d.br)
+	fb.offset, err = readFilter5Data(&d.br)
 	if err != nil {
 		return err
 	}
-	fb.length, err = readFilter5Data(d.br)
+	fb.length, err = readFilter5Data(&d.br)
 	if err != nil {
 		return err
 	}
@@ -189,11 +186,11 @@ func (d *decoder50) decodeLength(dr *decodeReader, i int) error {
 	copy(d.offset[1:i+1], d.offset[:i])
 	d.offset[0] = offset
 
-	sl, err := d.lengthDecoder.readSym(d.br)
+	sl, err := d.lengthDecoder.readSym(&d.br)
 	if err != nil {
 		return err
 	}
-	d.length, err = slotToLength(d.br, sl)
+	d.length, err = slotToLength(&d.br, sl)
 	if err == nil {
 		dr.copyBytes(d.length, d.offset[0])
 	}
@@ -201,13 +198,13 @@ func (d *decoder50) decodeLength(dr *decodeReader, i int) error {
 }
 
 func (d *decoder50) decodeOffset(dr *decodeReader, i int) error {
-	length, err := slotToLength(d.br, i)
+	length, err := slotToLength(&d.br, i)
 	if err != nil {
 		return err
 	}
 
 	offset := 1
-	slot, err := d.offsetDecoder.readSym(d.br)
+	slot, err := d.offsetDecoder.readSym(&d.br)
 	if err != nil {
 		return err
 	}
@@ -225,7 +222,7 @@ func (d *decoder50) decodeOffset(dr *decodeReader, i int) error {
 				}
 				offset += n << 4
 			}
-			n, err := d.lowoffsetDecoder.readSym(d.br)
+			n, err := d.lowoffsetDecoder.readSym(&d.br)
 			if err != nil {
 				return err
 			}
@@ -256,7 +253,7 @@ func (d *decoder50) decodeOffset(dr *decodeReader, i int) error {
 
 func (d *decoder50) fill(dr *decodeReader) error {
 	for dr.notFull() {
-		sym, err := d.mainDecoder.readSym(d.br)
+		sym, err := d.mainDecoder.readSym(&d.br)
 		if err == nil {
 			switch {
 			case sym < 256:

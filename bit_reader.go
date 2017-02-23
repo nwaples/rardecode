@@ -2,53 +2,94 @@ package rardecode
 
 import "io"
 
+const (
+	maxUint     = ^uint(0)
+	logintBytes = maxUint>>8&1 + maxUint>>16&1 + maxUint>>32&1
+	intBytes    = 1 << logintBytes
+	intSize     = intBytes << 3 // number of bits in an int
+)
+
 type bitReader interface {
 	readBits(n uint8) (int, error) // read n bits of data
 	unreadBits(n uint8)            // revert the reading of the last n bits read
 }
 
-// limitedBitReader is a bitReader that reads from rarBitReader and stops with io.EOF after l bits.
-// If rarBitReader returns an io.EOF before reading l bits, err is returned.
-type limitedBitReader struct {
-	*rarBitReader
-	l   int
-	err error
+// rar5BitReader is a bitReader that reads bytes from a byteReader and stops with io.EOF after l bits.
+type rar5BitReader struct {
+	r byteReader
+	v int    // cache of bits read from r
+	l int    // number of bits (not cached) that can be read from r
+	n uint8  // number of unread bits in v
+	b []byte // bytes() output cache from r
+}
+
+func (r *rar5BitReader) unreadBits(n uint8) { r.n += n }
+
+// ReadByte reads a byte from rar5BitReader's byteReader ignoring the bit cache v.
+func (r *rar5BitReader) ReadByte() (byte, error) {
+	if len(r.b) == 0 {
+		var err error
+		r.b, err = r.r.bytes()
+		if err != nil {
+			if err == io.EOF {
+				err = errDecoderOutOfData
+			}
+			return 0, err
+		}
+	}
+	c := r.b[0]
+	r.b = r.b[1:]
+	return c, nil
+}
+
+func (r *rar5BitReader) reset(br byteReader) {
+	r.r = br
+	r.b = nil
 }
 
 // setLimit sets the maximum bit count that can be read.
-func (l *limitedBitReader) setLimit(n int) { l.l = n }
+func (r *rar5BitReader) setLimit(n int) {
+	r.l = n
+	r.n = 0
+}
 
-func (l *limitedBitReader) readBits(n uint8) (int, error) {
-	for n > l.n {
-		if l.l == 0 {
+func (r *rar5BitReader) readBits(n uint8) (int, error) {
+	for n > r.n {
+		if r.l == 0 {
 			// reached bits limit
 			return 0, io.EOF
 		}
-		if len(l.b) == 0 {
+		if len(r.b) == 0 {
 			var err error
-			l.b, err = l.r.bytes()
+			r.b, err = r.r.bytes()
 			if err != nil {
 				if err == io.EOF {
 					// io.EOF before we reached bit limit
-					err = l.err
+					err = errDecoderOutOfData
 				}
 				return 0, err
 			}
 		}
-		l.v = l.v<<8 | int(l.b[0])
-		l.b = l.b[1:]
-		l.n += 8
-		l.l -= 8
-		if l.l < 0 {
-			// overshot, remove the extra bits
-			bits := uint8(-l.l)
-			l.l = 0
-			l.v >>= bits
-			l.n -= bits
+		// try to fit as many bits into r.v as possible
+		for len(r.b) > 0 && r.n <= intSize-8 {
+			r.v = r.v<<8 | int(r.b[0])
+			r.b = r.b[1:]
+			r.n += 8
+			r.l -= 8
+			if r.l <= 0 {
+				if r.l < 0 {
+					// overshot, discard the extra bits
+					bits := uint8(-r.l)
+					r.l = 0
+					r.v >>= bits
+					r.n -= bits
+				}
+				break
+			}
 		}
 	}
-	l.n -= n
-	return (l.v >> l.n) & ((1 << n) - 1), nil
+	r.n -= n
+	return (r.v >> r.n) & ((1 << n) - 1), nil
 }
 
 // rarBitReader wraps an io.ByteReader to perform various bit and byte
