@@ -13,8 +13,10 @@ func (d *ppm29Decoder) init(br *rarBitReader) error {
 	}
 	reset := maxOrder&0x20 > 0
 
-	// rarBitReader will be on a byte boundary now, so all ReadByte's
-	// from now on are byte aligned.
+	// Move any bytes in rarBitReader bit cache back into a byte slice.
+	// PPM only reads bytes so it is more efficient to read those bytes
+	// directly from byte slices, bypassing the extra bit shifts.
+	br.unshiftBytes()
 	d.br = br
 
 	var maxMB int

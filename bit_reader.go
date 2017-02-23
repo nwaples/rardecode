@@ -92,6 +92,23 @@ func (r *rar5BitReader) readBits(n uint8) (int, error) {
 	return (r.v >> r.n) & ((1 << n) - 1), nil
 }
 
+// replaceByteReader is a byteReader that returns b on the first call to bytes()
+// and then replaces the byteReader at rp with r.
+type replaceByteReader struct {
+	rp *byteReader
+	r  byteReader
+	b  []byte
+}
+
+func (r *replaceByteReader) Read(p []byte) (int, error) { return 0, io.EOF }
+
+func (r *replaceByteReader) bytes() ([]byte, error) {
+	*r.rp = r.r
+	return r.b, nil
+}
+
+func (r *replaceByteReader) skip() error { return r.r.skip() }
+
 // rarBitReader wraps an io.ByteReader to perform various bit and byte
 // reading utility functions used in RAR file processing.
 type rarBitReader struct {
@@ -106,6 +123,35 @@ func (r *rarBitReader) reset(br byteReader) {
 	r.n = 0
 	r.v = 0
 	r.b = nil
+}
+
+// unshiftBytes moves any bytes in rarBitReader bit cache back into a byte slice
+// and sets up byteReader's so that all bytes can now be read by ReadByte() without
+// going through the bit cache.
+func (r *rarBitReader) unshiftBytes() {
+	// no cached bits
+	if r.n == 0 {
+		return
+	}
+	// create and read byte slice for cached bits
+	b := make([]byte, r.n/8)
+	for i := len(b) - 1; i >= 0; i-- {
+		b[i] = byte(r.v)
+		r.v >>= 8
+	}
+	r.n = 0
+	// current bytes buffer empty, so store b and return
+	if len(r.b) == 0 {
+		r.b = b
+		return
+	}
+	// Put current bytes buffer and byteReader in a replaceByteReader and
+	// the unshifted bytes in the rarBitReader bytes buffer.
+	// When the bytes buffer is consumed, rarBitReader will call bytes()
+	// on replaceByteReader which will return the old bytes buffer and
+	// replace itself with the old byteReader in rarBitReader.
+	r.r = &replaceByteReader{rp: &r.r, r: r.r, b: r.b}
+	r.b = b
 }
 
 func (r *rarBitReader) readBits(n uint8) (int, error) {
