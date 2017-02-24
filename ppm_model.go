@@ -567,6 +567,7 @@ type model struct {
 	charMask    [256]byte
 	binSumm     [128][64]uint16
 	see2Cont    [25][16]see2Context
+	ibuf        []int
 }
 
 func (m *model) restart() {
@@ -800,13 +801,17 @@ func (m *model) decodeSymbol2(numMasked int) (*state, error) {
 	var i int
 	var hi uint32
 	states := c.states()
-	sl := make([]*state, len(states)-numMasked)
+	n := len(states) - numMasked
+	if len(m.ibuf) < n {
+		m.ibuf = make([]int, n)
+	}
+	sl := m.ibuf[:n]
 	for j := range sl {
 		for m.charMask[states[i].sym] == m.escCount {
 			i++
 		}
 		hi += uint32(states[i].freq)
-		sl[j] = &states[i]
+		sl[j] = i
 		i++
 	}
 
@@ -821,18 +826,18 @@ func (m *model) decodeSymbol2(numMasked int) (*state, error) {
 		if see != nil {
 			see.summ += uint16(scale)
 		}
-		for _, s := range sl {
-			m.charMask[s.sym] = m.escCount
+		for _, i := range sl {
+			m.charMask[states[i].sym] = m.escCount
 		}
 		return nil, err
 	}
 
-	hi = uint32(sl[0].freq)
+	hi = uint32(states[sl[0]].freq)
 	for hi <= count {
 		sl = sl[1:]
-		hi += uint32(sl[0].freq)
+		hi += uint32(states[sl[0]].freq)
 	}
-	s := sl[0]
+	s := &states[sl[0]]
 
 	err := m.rc.decode(hi-uint32(s.freq), hi)
 
