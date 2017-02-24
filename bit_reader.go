@@ -107,8 +107,6 @@ func (r *replaceByteReader) bytes() ([]byte, error) {
 	return r.b, nil
 }
 
-func (r *replaceByteReader) skip() error { return r.r.skip() }
-
 // rarBitReader wraps an io.ByteReader to perform various bit and byte
 // reading utility functions used in RAR file processing.
 type rarBitReader struct {

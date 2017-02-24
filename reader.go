@@ -42,7 +42,6 @@ var (
 type byteReader interface {
 	io.Reader
 	bytes() ([]byte, error)
-	skip() error
 }
 
 type limitedReader struct {
@@ -73,13 +72,6 @@ func (l *limitedReader) bytes() ([]byte, error) {
 	}
 	l.n -= int64(len(b))
 	return b, err
-}
-
-func (l *limitedReader) skip() error {
-	// skip using underlying reader as there may be padding after
-	// the end of the current limitedReader.
-	l.n = 0
-	return l.r.skip()
 }
 
 type limitedByteReader struct {
@@ -404,22 +396,18 @@ func (cr *checksumReader) bytes() ([]byte, error) {
 	return b, cr.eofError()
 }
 
-func (cr *checksumReader) skip() error {
-	return cr.r.skip()
-}
-
 // Reader provides sequential access to files in a RAR archive.
 type Reader struct {
 	r  byteReader // reader for current unpacked file
 	v  *volume
-	dr *decodeReader    // reader for decoding and filters if file is compressed
-	h  *fileBlockHeader // header for current file
+	dr *decodeReader     // reader for decoding and filters if file is compressed
+	pr *packedFileReader // reader for current raw file bytes
 }
 
 // Read reads from the current file in the RAR archive.
 func (r *Reader) Read(p []byte) (int, error) {
 	if r.r == nil {
-		err := r.nextFile(r.h)
+		err := r.nextFile()
 		if err != nil {
 			return 0, err
 		}
@@ -430,7 +418,7 @@ func (r *Reader) Read(p []byte) (int, error) {
 // WriteTo implements io.WriterTo.
 func (r *Reader) WriteTo(w io.Writer) (int64, error) {
 	if r.r == nil {
-		err := r.nextFile(r.h)
+		err := r.nextFile()
 		if err != nil {
 			return 0, err
 		}
@@ -451,49 +439,58 @@ func (r *Reader) WriteTo(w io.Writer) (int64, error) {
 	return n, err
 }
 
-// Next advances to the next file in the archive.
-func (r *Reader) Next() (*FileHeader, error) {
-	if r.r == nil && r.h != nil {
-		// reader for file being skipped hasnt been setup yet
-		if r.h.decVer > 0 && r.h.arcSolid {
-			// compressed files in a solid archive need to be decompressed fully
-			err := r.nextFile(r.h)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			// all other files, just skip the raw bytes
-			r.r = newPackedFileReader(r.v, r.h)
+// skip over current file contents in archive.
+func (r *Reader) skip() error {
+	if r.pr == nil {
+		return nil
+	}
+	h := r.pr.h
+	// check if file is a compressed file in a solid archive
+	if h.decVer > 0 && h.arcSolid {
+		var err error
+		if r.r == nil {
+			// setup full file reader
+			err = r.nextFile()
+		}
+		// decode and discard bytes
+		for err == nil {
+			_, err = r.dr.bytes()
+		}
+		if err != io.EOF {
+			return err
 		}
 	}
-	if r.r != nil {
-		// skip to end of current reader
-		if err := r.r.skip(); err != nil {
-			return nil, err
-		}
+	// skip over raw packed bytes
+	return r.pr.skip()
+}
+
+// Next advances to the next file in the archive.
+func (r *Reader) Next() (*FileHeader, error) {
+	// skip over current file
+	if err := r.skip(); err != nil {
+		return nil, err
 	}
 	// get next file header
 	h, err := nextFileBlockHeader(r.v)
 	if err != nil {
 		return nil, err
 	}
-	// Save the header and clear the reader.
+	// Save the packedFileReader and clear the reader.
 	// The reader will be setup on the next Read() or WriteTo().
-	r.h = h
+	r.pr = newPackedFileReader(r.v, h)
 	r.r = nil
 	return &h.FileHeader, nil
 }
 
-func (r *Reader) nextFile(h *fileBlockHeader) error {
-	if h == nil {
+func (r *Reader) nextFile() error {
+	if r.pr == nil {
 		return io.EOF
 	}
-	pr := newPackedFileReader(r.v, h)
-	r.r = pr // start with packed file reader
-
+	r.r = r.pr // start with packed file reader
+	h := r.pr.h
 	// check for encryption
 	if len(h.key) > 0 && len(h.iv) > 0 {
-		r.r = newAesDecryptReader(pr, h.key, h.iv) // decrypt
+		r.r = newAesDecryptReader(r.pr, h.key, h.iv) // decrypt
 	}
 	// check for compression
 	if h.decVer > 0 {
@@ -511,7 +508,7 @@ func (r *Reader) nextFile(h *fileBlockHeader) error {
 		r.r = &limitedReader{r.r, h.UnPackedSize, errShortFile}
 	}
 	if h.hash != nil {
-		r.r = &checksumReader{r.r, h.hash, pr}
+		r.r = &checksumReader{r.r, h.hash, r.pr}
 	}
 	return nil
 }
@@ -585,8 +582,9 @@ func (f *File) Open() (io.ReadCloser, error) {
 
 	r := new(ReadCloser)
 	r.v = v
+	r.pr = newPackedFileReader(r.v, f.h)
 	// setup reader
-	err = r.nextFile(f.h)
+	err = r.nextFile()
 	if err != nil {
 		_ = v.f.Close()
 		return nil, err

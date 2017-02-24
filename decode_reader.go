@@ -1,9 +1,6 @@
 package rardecode
 
-import (
-	"errors"
-	"io"
-)
+import "errors"
 
 const (
 	minWindowSize    = 0x40000
@@ -308,21 +305,4 @@ func (d *decodeReader) Read(p []byte) (int, error) {
 	n := copy(p, d.outbuf)
 	d.outbuf = d.outbuf[n:]
 	return n, err
-}
-
-func (d *decodeReader) skip() error {
-	if d.solid {
-		for {
-			_, err := d.bytes()
-			if err != nil {
-				if err == io.EOF {
-					break
-				}
-				return err
-			}
-		}
-	} else {
-		d.outbuf = nil
-	}
-	return d.br.skip()
 }
