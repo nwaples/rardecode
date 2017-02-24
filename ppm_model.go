@@ -193,101 +193,15 @@ func (s *state) setUint16(n uint16) { s.sym = byte(n); s.freq = byte(n >> 8) }
 // If there is only one state, the second state contains that state.
 // If there is more than one state, the second state contains the summFreq
 // and the index to the slice of states.
-type context struct {
-	i int32   // index into the states array for context
-	s []state // slice of two states representing context
-	a *subAllocator
-}
+// The context is represented by the index into the states array for these two states.
+type context int32
 
-// succPtr returns a pointer value for the context to be stored in a state.succ
-func (c *context) succPtr() int32 { return c.i }
-
-func (c context) numStates() int { return int(c.s[0].uint16()) }
-
-func (c *context) setNumStates(n int) { c.s[0].setUint16(uint16(n)) }
-
-func (c *context) statesIndex() int32 { return c.s[1].succ }
-
-func (c *context) setStatesIndex(n int32) { c.s[1].succ = n }
-
-func (c *context) suffix() context { return c.a.succContext(c.s[0].succ) }
-
-func (c *context) setSuffix(sc context) { c.s[0].succ = sc.i }
-
-func (c *context) summFreq() uint16 { return c.s[1].uint16() }
-
-func (c *context) setSummFreq(f uint16) { c.s[1].setUint16(f) }
-
-func (c *context) notEq(ctx context) bool { return c.i != ctx.i }
-
-func (c *context) states() []state {
-	if ns := int32(c.s[0].uint16()); ns != 1 {
-		i := c.s[1].succ
-		return c.a.states[i : i+ns]
+// succContext returns a context given a state.succ index
+func succContext(i int32) context {
+	if i <= 0 {
+		return 0
 	}
-	return c.s[1:]
-}
-
-// shrinkStates shrinks the state list down to size states
-func (c *context) shrinkStates(states []state, size int) []state {
-	i1 := units2Index[(len(states)+1)>>1]
-	i2 := units2Index[(size+1)>>1]
-
-	if size == 1 {
-		// store state in context, and free states block
-		n := c.statesIndex()
-		c.s[1] = states[0]
-		states = c.s[1:]
-		c.a.addFreeBlock(n, i1)
-	} else if i1 != i2 {
-		if n := c.a.removeFreeBlock(i2); n > 0 {
-			// allocate new block and copy
-			copy(c.a.states[n:], states[:size])
-			states = c.a.states[n:]
-			// free old block
-			c.a.addFreeBlock(c.statesIndex(), i1)
-			c.setStatesIndex(n)
-		} else {
-			// split current block, and free units not needed
-			n = c.statesIndex() + index2Units[i2]<<1
-			u := index2Units[i1] - index2Units[i2]
-			c.a.freeUnits(n, u)
-		}
-	}
-	c.setNumStates(size)
-	return states[:size]
-}
-
-// expandStates expands the states list by one
-func (c *context) expandStates() []state {
-	states := c.states()
-	ns := len(states)
-	if ns == 1 {
-		s := states[0]
-		n := c.a.allocUnits(1)
-		if n == 0 {
-			return nil
-		}
-		c.setStatesIndex(n)
-		states = c.a.states[n:]
-		states[0] = s
-	} else if ns&0x1 == 0 {
-		u := ns >> 1
-		i1 := units2Index[u]
-		i2 := units2Index[u+1]
-		if i1 != i2 {
-			n := c.a.allocUnits(i2)
-			if n == 0 {
-				return nil
-			}
-			copy(c.a.states[n:], states)
-			c.a.addFreeBlock(c.statesIndex(), i1)
-			c.setStatesIndex(n)
-			states = c.a.states[n:]
-		}
-	}
-	c.setNumStates(ns + 1)
-	return states[:ns+1]
+	return context(i)
 }
 
 type subAllocator struct {
@@ -388,17 +302,6 @@ func (a *subAllocator) succByte(i int32) byte {
 		return byte(succ & 0xff)
 	}
 }
-
-// succContext returns a context given a state.succ index
-func (a *subAllocator) succContext(i int32) context {
-	if i <= 0 {
-		return context{}
-	}
-	return context{i: i, s: a.states[i : i+2 : i+2], a: a}
-}
-
-// succIsNil returns whether a state.succ points to nothing
-func (a *subAllocator) succIsNil(i int32) bool { return i == 0 }
 
 // nextByteAddr takes a state.succ value representing a pointer
 // to a byte, and returns the next bytes address
@@ -529,26 +432,122 @@ func (a *subAllocator) newContext(s state, suffix context) context {
 		n = a.heap2Hi
 	} else if n = a.removeFreeBlock(1); n == 0 {
 		if n = a.allocUnitsRare(1); n == 0 {
-			return context{}
+			return 0
 		}
 	}
-	c := context{i: n, s: a.states[n : n+2 : n+2], a: a}
-	c.s[0] = state{}
-	c.setNumStates(1)
-	c.s[1] = s
-	if suffix.i != 0 {
-		c.setSuffix(suffix)
+	c := context(n)
+	a.states[c] = state{}
+	a.contextSetNumStates(c, 1)
+	a.states[c+1] = s
+	if suffix != 0 {
+		a.contextSetSuffix(c, suffix)
 	}
 	return c
 }
 
 func (a *subAllocator) newContextSize(ns int) context {
-	c := a.newContext(state{}, context{})
-	c.setNumStates(ns)
+	c := a.newContext(state{}, context(0))
+	a.contextSetNumStates(c, ns)
 	i := units2Index[(ns+1)>>1]
 	n := a.allocUnits(i)
-	c.setStatesIndex(n)
+	a.contextSetStatesIndex(c, n)
 	return c
+}
+
+func (a *subAllocator) contextNumStates(c context) int       { return int(a.states[c].uint16()) }
+func (a *subAllocator) contextSetNumStates(c context, n int) { a.states[c].setUint16(uint16(n)) }
+
+func (a *subAllocator) contextSummFreq(c context) uint16       { return a.states[c+1].uint16() }
+func (a *subAllocator) contextSetSummFreq(c context, n uint16) { a.states[c+1].setUint16(n) }
+func (a *subAllocator) contextIncSummFreq(c context, n uint16) {
+	a.states[c+1].setUint16(a.states[c+1].uint16() + n)
+}
+
+func (a *subAllocator) contextSuffix(c context) context  { return succContext(a.states[c].succ) }
+func (a *subAllocator) contextSetSuffix(c, suff context) { a.states[c].succ = int32(suff) }
+
+func (a *subAllocator) contextStatesIndex(c context) int32       { return a.states[c+1].succ }
+func (a *subAllocator) contextSetStatesIndex(c context, n int32) { a.states[c+1].succ = n }
+
+func (a *subAllocator) contextStates(c context) []state {
+	if ns := int32(a.states[c].uint16()); ns != 1 {
+		i := a.states[c+1].succ
+		return a.states[i : i+ns]
+	}
+	return a.states[c+1 : c+2]
+}
+
+// shrinkStates shrinks the state list down to size states
+func (a *subAllocator) shrinkStates(c context, states []state, size int) []state {
+	i1 := units2Index[(len(states)+1)>>1]
+	i2 := units2Index[(size+1)>>1]
+
+	if size == 1 {
+		// store state in context, and free states block
+		n := a.contextStatesIndex(c)
+		a.states[c+1] = states[0]
+		states = a.states[c+1:]
+		a.addFreeBlock(n, i1)
+	} else if i1 != i2 {
+		if n := a.removeFreeBlock(i2); n > 0 {
+			// allocate new block and copy
+			copy(a.states[n:], states[:size])
+			states = a.states[n:]
+			// free old block
+			a.addFreeBlock(a.contextStatesIndex(c), i1)
+			a.contextSetStatesIndex(c, n)
+		} else {
+			// split current block, and free units not needed
+			n = a.contextStatesIndex(c) + index2Units[i2]<<1
+			u := index2Units[i1] - index2Units[i2]
+			a.freeUnits(n, u)
+		}
+	}
+	a.contextSetNumStates(c, size)
+	return states[:size]
+}
+
+// expandStates expands the states list by one
+func (a *subAllocator) expandStates(c context) []state {
+	states := a.contextStates(c)
+	ns := len(states)
+	if ns == 1 {
+		s := states[0]
+		n := a.allocUnits(1)
+		if n == 0 {
+			return nil
+		}
+		a.contextSetStatesIndex(c, n)
+		states = a.states[n:]
+		states[0] = s
+	} else if ns&0x1 == 0 {
+		u := ns >> 1
+		i1 := units2Index[u]
+		i2 := units2Index[u+1]
+		if i1 != i2 {
+			n := a.allocUnits(i2)
+			if n == 0 {
+				return nil
+			}
+			copy(a.states[n:], states)
+			a.addFreeBlock(a.contextStatesIndex(c), i1)
+			a.contextSetStatesIndex(c, n)
+			states = a.states[n:]
+		}
+	}
+	a.contextSetNumStates(c, ns+1)
+	return states[:ns+1]
+}
+
+func (a *subAllocator) findState(c context, sym byte) *state {
+	var i int
+	states := a.contextStates(c)
+	for i = range states {
+		if states[i].sym == sym {
+			break
+		}
+	}
+	return &states[i]
 }
 
 type model struct {
@@ -588,8 +587,8 @@ func (m *model) restart() {
 	m.a.restart()
 
 	c := m.a.newContextSize(256)
-	c.setSummFreq(257)
-	states := c.states()
+	m.a.contextSetSummFreq(c, 257)
+	states := m.a.contextStates(c)
 	for i := range states {
 		states[i] = state{sym: byte(i), freq: 1}
 	}
@@ -620,7 +619,7 @@ func (m *model) init(br io.ByteReader, reset bool, maxOrder, maxMB int) error {
 		return err
 	}
 	if !reset {
-		if m.minC.i == 0 {
+		if m.minC == 0 {
 			return errCorruptPPM
 		}
 		return nil
@@ -645,8 +644,8 @@ func (m *model) rescale(s *state) *state {
 	var summFreq uint16
 
 	s.freq += 4
-	states := c.states()
-	escFreq := c.summFreq() + 4
+	states := m.a.contextStates(c)
+	escFreq := m.a.contextSummFreq(c) + 4
 
 	for i := range states {
 		f := states[i].freq
@@ -676,7 +675,7 @@ func (m *model) rescale(s *state) *state {
 		escFreq++
 	}
 	if i != len(states)-1 {
-		states = c.shrinkStates(states, i+1)
+		states = m.a.shrinkStates(c, states, i+1)
 	}
 	s = &states[0]
 	if i == 0 {
@@ -689,15 +688,15 @@ func (m *model) rescale(s *state) *state {
 		}
 	}
 	summFreq += escFreq - (escFreq >> 1)
-	c.setSummFreq(summFreq)
+	m.a.contextSetSummFreq(c, summFreq)
 	return s
 }
 
 func (m *model) decodeBinSymbol() (*state, error) {
 	c := m.minC
-	s := &c.states()[0]
+	s := &m.a.contextStates(c)[0]
 
-	ns := c.suffix().numStates()
+	ns := m.a.contextNumStates(m.a.contextSuffix(c))
 	i := m.prevSuccess + ns2BSIndex[ns-1] + byte(m.runLength>>26)&0x20
 	if m.prevSym >= 64 {
 		i += 8
@@ -728,8 +727,8 @@ func (m *model) decodeBinSymbol() (*state, error) {
 
 func (m *model) decodeSymbol1() (*state, error) {
 	c := m.minC
-	states := c.states()
-	scale := uint32(c.summFreq())
+	states := m.a.contextStates(c)
+	scale := uint32(m.a.contextSummFreq(c))
 	// protect against divide by zero
 	// TODO: look at why this happens, may be problem elsewhere
 	if scale == 0 {
@@ -747,7 +746,7 @@ func (m *model) decodeSymbol1() (*state, error) {
 		}
 		err := m.rc.decode(n-uint32(s.freq), n)
 		s.freq += 4
-		c.setSummFreq(uint16(scale + 4))
+		m.a.contextSetSummFreq(c, uint16(scale+4))
 		if i == 0 {
 			if 2*n > scale {
 				m.prevSuccess = 1
@@ -770,7 +769,7 @@ func (m *model) decodeSymbol1() (*state, error) {
 }
 
 func (m *model) makeEscFreq(c context, numMasked int) *see2Context {
-	ns := c.numStates()
+	ns := m.a.contextNumStates(c)
 	if ns == 256 {
 		return nil
 	}
@@ -780,10 +779,10 @@ func (m *model) makeEscFreq(c context, numMasked int) *see2Context {
 	if m.prevSym >= 64 {
 		i = 8
 	}
-	if diff < c.suffix().numStates()-ns {
+	if diff < m.a.contextNumStates(m.a.contextSuffix(c))-ns {
 		i++
 	}
-	if int(c.summFreq()) < 11*ns {
+	if int(m.a.contextSummFreq(c)) < 11*ns {
 		i += 2
 	}
 	if numMasked > diff {
@@ -800,7 +799,7 @@ func (m *model) decodeSymbol2(numMasked int) (*state, error) {
 
 	var i int
 	var hi uint32
-	states := c.states()
+	states := m.a.contextStates(c)
 	n := len(states) - numMasked
 	if len(m.ibuf) < n {
 		m.ibuf = make([]int, n)
@@ -847,19 +846,8 @@ func (m *model) decodeSymbol2(numMasked int) (*state, error) {
 	m.runLength = m.initRL
 
 	s.freq += 4
-	c.setSummFreq(c.summFreq() + 4)
+	m.a.contextIncSummFreq(c, 4)
 	return m.rescale(s), err
-}
-
-func (c *context) findState(sym byte) *state {
-	var i int
-	states := c.states()
-	for i = range states {
-		if states[i].sym == sym {
-			break
-		}
-	}
-	return &states[i]
 }
 
 func (m *model) createSuccessors(s, ss *state) context {
@@ -870,14 +858,14 @@ func (m *model) createSuccessors(s, ss *state) context {
 	}
 
 	c := m.minC
-	for suff := c.suffix(); suff.i != 0; suff = c.suffix() {
+	for suff := m.a.contextSuffix(c); suff > 0; suff = m.a.contextSuffix(c) {
 		c = suff
 
 		if ss == nil {
-			ss = c.findState(s.sym)
+			ss = m.a.findState(c, s.sym)
 		}
 		if ss.succ != s.succ {
-			c = m.a.succContext(ss.succ)
+			c = succContext(ss.succ)
 			break
 		}
 		sl = append(sl, ss)
@@ -892,12 +880,12 @@ func (m *model) createSuccessors(s, ss *state) context {
 	up.sym = m.a.succByte(s.succ)
 	up.succ = m.a.nextByteAddr(s.succ)
 
-	states := c.states()
+	states := m.a.contextStates(c)
 	if len(states) > 1 {
-		s = c.findState(up.sym)
+		s = m.a.findState(c, up.sym)
 
 		cf := uint16(s.freq) - 1
-		s0 := c.summFreq() - uint16(len(states)) - cf
+		s0 := m.a.contextSummFreq(c) - uint16(len(states)) - cf
 
 		if 2*cf <= s0 {
 			if 5*cf > s0 {
@@ -914,19 +902,19 @@ func (m *model) createSuccessors(s, ss *state) context {
 
 	for i := len(sl) - 1; i >= 0; i-- {
 		c = m.a.newContext(up, c)
-		if c.i == 0 {
+		if c == 0 {
 			return c
 		}
-		sl[i].succ = c.succPtr()
+		sl[i].succ = int32(c)
 	}
 	return c
 }
 
 func (m *model) update(s *state) {
 	if m.orderFall == 0 {
-		if c := m.a.succContext(s.succ); c.i != 0 {
-			m.minC = c
-			m.maxC = c
+		if s.succ > 0 {
+			m.minC = context(s.succ)
+			m.maxC = m.minC
 			return
 		}
 	}
@@ -940,9 +928,9 @@ func (m *model) update(s *state) {
 
 	var ss *state // matching minC.suffix state
 
-	if s.freq < maxFreq/4 && m.minC.suffix().i != 0 {
-		c := m.minC.suffix()
-		states := c.states()
+	if s.freq < maxFreq/4 && m.a.contextSuffix(m.minC) > 0 {
+		c := m.a.contextSuffix(m.minC)
+		states := m.a.contextStates(c)
 
 		var i int
 		if len(states) > 1 {
@@ -955,7 +943,7 @@ func (m *model) update(s *state) {
 			}
 			if states[i].freq < maxFreq-9 {
 				states[i].freq += 2
-				c.setSummFreq(c.summFreq() + 2)
+				m.a.contextIncSummFreq(c, 2)
 			}
 		} else if states[0].freq < 32 {
 			states[0].freq++
@@ -965,56 +953,57 @@ func (m *model) update(s *state) {
 
 	if m.orderFall == 0 {
 		c := m.createSuccessors(s, ss)
-		if c.i == 0 {
+		if c == 0 {
 			m.restart()
 		} else {
 			m.minC = c
 			m.maxC = c
-			s.succ = c.succPtr()
+			s.succ = int32(c)
 		}
 		return
 	}
 
 	succ := m.a.pushByte(s.sym)
-	if m.a.succIsNil(succ) {
+	if succ == 0 {
 		m.restart()
 		return
 	}
 
 	var minC context
-	if m.a.succIsNil(s.succ) {
+	if s.succ == 0 {
 		s.succ = succ
 		minC = m.minC
 	} else {
-		minC = m.a.succContext(s.succ)
-		if minC.i == 0 {
+		if s.succ > 0 {
+			minC = context(s.succ)
+		} else {
 			minC = m.createSuccessors(s, ss)
-			if minC.i == 0 {
+			if minC == 0 {
 				m.restart()
 				return
 			}
 		}
 		m.orderFall--
 		if m.orderFall == 0 {
-			succ = minC.succPtr()
-			if m.maxC.notEq(m.minC) {
+			succ = int32(minC)
+			if m.maxC != m.minC {
 				m.a.popByte()
 			}
 		}
 	}
 
-	n := m.minC.numStates()
-	s0 := int(m.minC.summFreq()) - n - int(s.freq-1)
-	for c := m.maxC; c.notEq(m.minC); c = c.suffix() {
+	n := m.a.contextNumStates(m.minC)
+	s0 := int(m.a.contextSummFreq(m.minC)) - n - int(s.freq-1)
+	for c := m.maxC; c != m.minC; c = m.a.contextSuffix(c) {
 		var summFreq uint16
 
-		states := c.expandStates()
+		states := m.a.expandStates(c)
 		if states == nil {
 			m.restart()
 			return
 		}
 		if ns := len(states) - 1; ns != 1 {
-			summFreq = c.summFreq()
+			summFreq = m.a.contextSummFreq(c)
 			if 4*ns <= n && int(summFreq) <= 8*ns {
 				summFreq += 2
 			}
@@ -1061,29 +1050,29 @@ func (m *model) update(s *state) {
 			summFreq += 3
 		}
 		states[len(states)-1] = state{sym: s.sym, freq: freq, succ: succ}
-		c.setSummFreq(summFreq)
+		m.a.contextSetSummFreq(c, summFreq)
 	}
 	m.minC = minC
 	m.maxC = minC
 }
 
 func (m *model) ReadByte() (byte, error) {
-	if m.minC.i == 0 {
+	if m.minC == 0 {
 		return 0, errCorruptPPM
 	}
 	var s *state
 	var err error
-	if m.minC.numStates() == 1 {
+	if m.a.contextNumStates(m.minC) == 1 {
 		s, err = m.decodeBinSymbol()
 	} else {
 		s, err = m.decodeSymbol1()
 	}
 	for s == nil && err == nil {
-		n := m.minC.numStates()
-		for m.minC.numStates() == n {
+		n := m.a.contextNumStates(m.minC)
+		for m.a.contextNumStates(m.minC) == n {
 			m.orderFall++
-			m.minC = m.minC.suffix()
-			if m.minC.i == 0 {
+			m.minC = m.a.contextSuffix(m.minC)
+			if m.minC <= 0 {
 				return 0, errCorruptPPM
 			}
 		}
