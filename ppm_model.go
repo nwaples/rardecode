@@ -202,7 +202,7 @@ type context struct {
 // succPtr returns a pointer value for the context to be stored in a state.succ
 func (c *context) succPtr() int32 { return c.i }
 
-func (c *context) numStates() int { return int(c.s[0].uint16()) }
+func (c context) numStates() int { return int(c.s[0].uint16()) }
 
 func (c *context) setNumStates(n int) { c.s[0].setUint16(uint16(n)) }
 
@@ -210,15 +210,15 @@ func (c *context) statesIndex() int32 { return c.s[1].succ }
 
 func (c *context) setStatesIndex(n int32) { c.s[1].succ = n }
 
-func (c *context) suffix() *context { return c.a.succContext(c.s[0].succ) }
+func (c *context) suffix() context { return c.a.succContext(c.s[0].succ) }
 
-func (c *context) setSuffix(sc *context) { c.s[0].succ = sc.i }
+func (c *context) setSuffix(sc context) { c.s[0].succ = sc.i }
 
 func (c *context) summFreq() uint16 { return c.s[1].uint16() }
 
 func (c *context) setSummFreq(f uint16) { c.s[1].setUint16(f) }
 
-func (c *context) notEq(ctx *context) bool { return c.i != ctx.i }
+func (c *context) notEq(ctx context) bool { return c.i != ctx.i }
 
 func (c *context) states() []state {
 	if ns := int32(c.s[0].uint16()); ns != 1 {
@@ -390,11 +390,11 @@ func (a *subAllocator) succByte(i int32) byte {
 }
 
 // succContext returns a context given a state.succ index
-func (a *subAllocator) succContext(i int32) *context {
+func (a *subAllocator) succContext(i int32) context {
 	if i <= 0 {
-		return nil
+		return context{}
 	}
-	return &context{i: i, s: a.states[i : i+2 : i+2], a: a}
+	return context{i: i, s: a.states[i : i+2 : i+2], a: a}
 }
 
 // succIsNil returns whether a state.succ points to nothing
@@ -521,7 +521,7 @@ func (a *subAllocator) allocUnits(i byte) int32 {
 	return a.allocUnitsRare(i)
 }
 
-func (a *subAllocator) newContext(s state, suffix *context) *context {
+func (a *subAllocator) newContext(s state, suffix context) context {
 	var n int32
 	if a.heap2Lo < a.heap2Hi {
 		// allocate from top of heap2
@@ -529,21 +529,21 @@ func (a *subAllocator) newContext(s state, suffix *context) *context {
 		n = a.heap2Hi
 	} else if n = a.removeFreeBlock(1); n == 0 {
 		if n = a.allocUnitsRare(1); n == 0 {
-			return nil
+			return context{}
 		}
 	}
-	c := &context{i: n, s: a.states[n : n+2 : n+2], a: a}
+	c := context{i: n, s: a.states[n : n+2 : n+2], a: a}
 	c.s[0] = state{}
 	c.setNumStates(1)
 	c.s[1] = s
-	if suffix != nil {
+	if suffix.i != 0 {
 		c.setSuffix(suffix)
 	}
 	return c
 }
 
-func (a *subAllocator) newContextSize(ns int) *context {
-	c := a.newContext(state{}, nil)
+func (a *subAllocator) newContextSize(ns int) context {
+	c := a.newContext(state{}, context{})
 	c.setNumStates(ns)
 	i := units2Index[(ns+1)>>1]
 	n := a.allocUnits(i)
@@ -560,8 +560,8 @@ type model struct {
 	escCount    byte
 	prevSym     byte
 	initEsc     byte
-	minC        *context
-	maxC        *context
+	minC        context
+	maxC        context
 	rc          rangeCoder
 	a           subAllocator
 	charMask    [256]byte
@@ -620,7 +620,7 @@ func (m *model) init(br io.ByteReader, reset bool, maxOrder, maxMB int) error {
 		return err
 	}
 	if !reset {
-		if m.minC == nil {
+		if m.minC.i == 0 {
 			return errCorruptPPM
 		}
 		return nil
@@ -769,7 +769,7 @@ func (m *model) decodeSymbol1() (*state, error) {
 	return nil, m.rc.decode(n, scale)
 }
 
-func (m *model) makeEscFreq(c *context, numMasked int) *see2Context {
+func (m *model) makeEscFreq(c context, numMasked int) *see2Context {
 	ns := c.numStates()
 	if ns == 256 {
 		return nil
@@ -862,7 +862,7 @@ func (c *context) findState(sym byte) *state {
 	return &states[i]
 }
 
-func (m *model) createSuccessors(s, ss *state) *context {
+func (m *model) createSuccessors(s, ss *state) context {
 	var sl []*state
 
 	if m.orderFall != 0 {
@@ -870,7 +870,7 @@ func (m *model) createSuccessors(s, ss *state) *context {
 	}
 
 	c := m.minC
-	for suff := c.suffix(); suff != nil; suff = c.suffix() {
+	for suff := c.suffix(); suff.i != 0; suff = c.suffix() {
 		c = suff
 
 		if ss == nil {
@@ -914,8 +914,8 @@ func (m *model) createSuccessors(s, ss *state) *context {
 
 	for i := len(sl) - 1; i >= 0; i-- {
 		c = m.a.newContext(up, c)
-		if c == nil {
-			return nil
+		if c.i == 0 {
+			return c
 		}
 		sl[i].succ = c.succPtr()
 	}
@@ -924,7 +924,7 @@ func (m *model) createSuccessors(s, ss *state) *context {
 
 func (m *model) update(s *state) {
 	if m.orderFall == 0 {
-		if c := m.a.succContext(s.succ); c != nil {
+		if c := m.a.succContext(s.succ); c.i != 0 {
 			m.minC = c
 			m.maxC = c
 			return
@@ -940,7 +940,7 @@ func (m *model) update(s *state) {
 
 	var ss *state // matching minC.suffix state
 
-	if s.freq < maxFreq/4 && m.minC.suffix() != nil {
+	if s.freq < maxFreq/4 && m.minC.suffix().i != 0 {
 		c := m.minC.suffix()
 		states := c.states()
 
@@ -965,7 +965,7 @@ func (m *model) update(s *state) {
 
 	if m.orderFall == 0 {
 		c := m.createSuccessors(s, ss)
-		if c == nil {
+		if c.i == 0 {
 			m.restart()
 		} else {
 			m.minC = c
@@ -981,15 +981,15 @@ func (m *model) update(s *state) {
 		return
 	}
 
-	var minC *context
+	var minC context
 	if m.a.succIsNil(s.succ) {
 		s.succ = succ
 		minC = m.minC
 	} else {
 		minC = m.a.succContext(s.succ)
-		if minC == nil {
+		if minC.i == 0 {
 			minC = m.createSuccessors(s, ss)
-			if minC == nil {
+			if minC.i == 0 {
 				m.restart()
 				return
 			}
@@ -1068,7 +1068,7 @@ func (m *model) update(s *state) {
 }
 
 func (m *model) ReadByte() (byte, error) {
-	if m.minC == nil {
+	if m.minC.i == 0 {
 		return 0, errCorruptPPM
 	}
 	var s *state
@@ -1083,7 +1083,7 @@ func (m *model) ReadByte() (byte, error) {
 		for m.minC.numStates() == n {
 			m.orderFall++
 			m.minC = m.minC.suffix()
-			if m.minC == nil {
+			if m.minC.i == 0 {
 				return 0, errCorruptPPM
 			}
 		}
