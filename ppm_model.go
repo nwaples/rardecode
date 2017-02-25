@@ -435,14 +435,11 @@ func (a *subAllocator) newContext(s state, suffix context) context {
 			return 0
 		}
 	}
-	c := context(n)
-	a.states[c] = state{}
-	a.contextSetNumStates(c, 1)
-	a.states[c+1] = s
-	if suffix != 0 {
-		a.contextSetSuffix(c, suffix)
-	}
-	return c
+	// we don't need to set numStates to 1 as the default value of 0 in the sym
+	// field is always incremented by 1 to get numStates.
+	a.states[n] = state{succ: int32(suffix)}
+	a.states[n+1] = s
+	return context(n)
 }
 
 func (a *subAllocator) newContextSize(ns int) context {
@@ -454,8 +451,9 @@ func (a *subAllocator) newContextSize(ns int) context {
 	return c
 }
 
-func (a *subAllocator) contextNumStates(c context) int       { return int(a.states[c].uint16()) }
-func (a *subAllocator) contextSetNumStates(c context, n int) { a.states[c].setUint16(uint16(n)) }
+// since number of states is always > 0 && <= 256, we can fit it in a single byte
+func (a *subAllocator) contextNumStates(c context) int       { return int(a.states[c].sym) + 1 }
+func (a *subAllocator) contextSetNumStates(c context, n int) { a.states[c].sym = byte(n - 1) }
 
 func (a *subAllocator) contextSummFreq(c context) uint16       { return a.states[c+1].uint16() }
 func (a *subAllocator) contextSetSummFreq(c context, n uint16) { a.states[c+1].setUint16(n) }
@@ -463,14 +461,13 @@ func (a *subAllocator) contextIncSummFreq(c context, n uint16) {
 	a.states[c+1].setUint16(a.states[c+1].uint16() + n)
 }
 
-func (a *subAllocator) contextSuffix(c context) context  { return succContext(a.states[c].succ) }
-func (a *subAllocator) contextSetSuffix(c, suff context) { a.states[c].succ = int32(suff) }
+func (a *subAllocator) contextSuffix(c context) context { return succContext(a.states[c].succ) }
 
 func (a *subAllocator) contextStatesIndex(c context) int32       { return a.states[c+1].succ }
 func (a *subAllocator) contextSetStatesIndex(c context, n int32) { a.states[c+1].succ = n }
 
 func (a *subAllocator) contextStates(c context) []state {
-	if ns := int32(a.states[c].uint16()); ns != 1 {
+	if ns := int32(a.states[c].sym) + 1; ns != 1 {
 		i := a.states[c+1].succ
 		return a.states[i : i+ns]
 	}
