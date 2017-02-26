@@ -254,9 +254,6 @@ func (a *subAllocator) restart() {
 	for i := range a.freeList {
 		a.freeList[i] = 0
 	}
-	for i := range a.states {
-		a.states[i] = state{}
-	}
 }
 
 // pushByte puts a byte on the heap and returns a state.succ index that
