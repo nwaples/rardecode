@@ -560,7 +560,8 @@ type model struct {
 	charMask    [256]byte
 	binSumm     [128][64]uint16
 	see2Cont    [25][16]see2Context
-	ibuf        []int
+	ibuf        [256]int
+	sbuf        [256]*state
 }
 
 func (m *model) restart() {
@@ -795,9 +796,6 @@ func (m *model) decodeSymbol2(numMasked int) (*state, error) {
 	var hi uint32
 	states := m.a.contextStates(c)
 	n := len(states) - numMasked
-	if len(m.ibuf) < n {
-		m.ibuf = make([]int, n)
-	}
 	sl := m.ibuf[:n]
 	for j := range sl {
 		for m.charMask[states[i].sym] == m.escCount {
@@ -845,7 +843,7 @@ func (m *model) decodeSymbol2(numMasked int) (*state, error) {
 }
 
 func (m *model) createSuccessors(s, ss *state) context {
-	var sl []*state
+	sl := m.sbuf[:0]
 
 	if m.orderFall != 0 {
 		sl = append(sl, s)
