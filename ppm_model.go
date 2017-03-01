@@ -613,9 +613,6 @@ func (m *model) init(br io.ByteReader, reset bool, maxOrder, maxMB int) error {
 		return err
 	}
 	if !reset {
-		if m.minC == 0 {
-			return errCorruptPPM
-		}
 		return nil
 	}
 
@@ -626,7 +623,7 @@ func (m *model) init(br io.ByteReader, reset bool, maxOrder, maxMB int) error {
 	}
 	m.maxOrder = maxOrder
 	m.prevSym = 0
-	m.restart()
+	m.minC = 0
 	return nil
 }
 
@@ -944,20 +941,15 @@ func (m *model) update(s *state) {
 	}
 
 	if m.orderFall == 0 {
-		c := m.createSuccessors(s, ss)
-		if c == 0 {
-			m.restart()
-		} else {
-			m.minC = c
-			m.maxC = c
-			s.succ = int32(c)
-		}
+		m.minC = m.createSuccessors(s, ss)
+		m.maxC = m.minC
+		s.succ = int32(m.minC)
 		return
 	}
 
 	succ := m.a.pushByte(s.sym)
 	if succ == 0 {
-		m.restart()
+		m.minC = 0
 		return
 	}
 
@@ -971,7 +963,7 @@ func (m *model) update(s *state) {
 		} else {
 			minC = m.createSuccessors(s, ss)
 			if minC == 0 {
-				m.restart()
+				m.minC = 0
 				return
 			}
 		}
@@ -991,7 +983,7 @@ func (m *model) update(s *state) {
 
 		states := m.a.expandStates(c)
 		if states == nil {
-			m.restart()
+			m.minC = 0
 			return
 		}
 		if ns := len(states) - 1; ns != 1 {
@@ -1050,7 +1042,7 @@ func (m *model) update(s *state) {
 
 func (m *model) ReadByte() (byte, error) {
 	if m.minC == 0 {
-		return 0, errCorruptPPM
+		m.restart()
 	}
 	var s *state
 	var err error
