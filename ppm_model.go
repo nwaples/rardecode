@@ -553,8 +553,7 @@ type model struct {
 	escCount    byte
 	prevSym     byte
 	initEsc     byte
-	minC        context
-	maxC        context
+	c           context
 	rc          rangeCoder
 	a           subAllocator
 	charMask    [256]byte
@@ -581,14 +580,12 @@ func (m *model) restart() {
 
 	m.a.restart()
 
-	c := m.a.newContextSize(256)
-	m.a.contextSetSummFreq(c, 257)
-	states := m.a.contextStates(c)
+	m.c = m.a.newContextSize(256)
+	m.a.contextSetSummFreq(m.c, 257)
+	states := m.a.contextStates(m.c)
 	for i := range states {
 		states[i] = state{sym: byte(i), freq: 1}
 	}
-	m.minC = c
-	m.maxC = c
 
 	for i := range m.binSumm {
 		for j, esc := range initBinEsc {
@@ -623,15 +620,14 @@ func (m *model) init(br io.ByteReader, reset bool, maxOrder, maxMB int) error {
 	}
 	m.maxOrder = maxOrder
 	m.prevSym = 0
-	m.minC = 0
+	m.c = 0
 	return nil
 }
 
-func (m *model) rescale(s *state) *state {
+func (m *model) rescale(c context, s *state) *state {
 	if s.freq <= maxFreq {
 		return s
 	}
-	c := m.minC
 
 	var summFreq uint16
 
@@ -684,8 +680,7 @@ func (m *model) rescale(s *state) *state {
 	return s
 }
 
-func (m *model) decodeBinSymbol() (*state, error) {
-	c := m.minC
+func (m *model) decodeBinSymbol(c context) (*state, error) {
 	s := &m.a.contextStates(c)[0]
 
 	ns := m.a.contextNumStates(m.a.contextSuffix(c))
@@ -717,8 +712,7 @@ func (m *model) decodeBinSymbol() (*state, error) {
 	return nil, err
 }
 
-func (m *model) decodeSymbol1() (*state, error) {
-	c := m.minC
+func (m *model) decodeSymbol1(c context) (*state, error) {
 	states := m.a.contextStates(c)
 	scale := uint32(m.a.contextSummFreq(c))
 	// protect against divide by zero
@@ -751,7 +745,7 @@ func (m *model) decodeSymbol1() (*state, error) {
 			states[i-1], states[i] = states[i], states[i-1]
 			s = &states[i-1]
 		}
-		return m.rescale(s), err
+		return m.rescale(c, s), err
 	}
 
 	for _, s := range states {
@@ -783,9 +777,7 @@ func (m *model) makeEscFreq(c context, numMasked int) *see2Context {
 	return &m.see2Cont[ns2Index[diff-1]][i]
 }
 
-func (m *model) decodeSymbol2(numMasked int) (*state, error) {
-	c := m.minC
-
+func (m *model) decodeSymbol2(c context, numMasked int) (*state, error) {
 	see := m.makeEscFreq(c, numMasked)
 	scale := see.mean()
 
@@ -836,17 +828,16 @@ func (m *model) decodeSymbol2(numMasked int) (*state, error) {
 
 	s.freq += 4
 	m.a.contextIncSummFreq(c, 4)
-	return m.rescale(s), err
+	return m.rescale(c, s), err
 }
 
-func (m *model) createSuccessors(s, ss *state) context {
+func (m *model) createSuccessors(c context, s, ss *state) context {
 	sl := m.sbuf[:0]
 
 	if m.orderFall != 0 {
 		sl = append(sl, s)
 	}
 
-	c := m.minC
 	for suff := m.a.contextSuffix(c); suff > 0; suff = m.a.contextSuffix(c) {
 		c = suff
 
@@ -899,12 +890,10 @@ func (m *model) createSuccessors(s, ss *state) context {
 	return c
 }
 
-func (m *model) update(s *state) {
+func (m *model) update(minC, maxC context, s *state) context {
 	if m.orderFall == 0 {
 		if s.succ > 0 {
-			m.minC = context(s.succ)
-			m.maxC = m.minC
-			return
+			return context(s.succ)
 		}
 	}
 
@@ -917,8 +906,8 @@ func (m *model) update(s *state) {
 
 	var ss *state // matching minC.suffix state
 
-	if s.freq < maxFreq/4 && m.a.contextSuffix(m.minC) > 0 {
-		c := m.a.contextSuffix(m.minC)
+	if s.freq < maxFreq/4 && m.a.contextSuffix(minC) > 0 {
+		c := m.a.contextSuffix(minC)
 		states := m.a.contextStates(c)
 
 		var i int
@@ -941,50 +930,46 @@ func (m *model) update(s *state) {
 	}
 
 	if m.orderFall == 0 {
-		m.minC = m.createSuccessors(s, ss)
-		m.maxC = m.minC
-		s.succ = int32(m.minC)
-		return
+		minC = m.createSuccessors(minC, s, ss)
+		s.succ = int32(minC)
+		return minC
 	}
 
 	succ := m.a.pushByte(s.sym)
 	if succ == 0 {
-		m.minC = 0
-		return
+		return context(0)
 	}
 
-	var minC context
+	var newC context
 	if s.succ == 0 {
 		s.succ = succ
-		minC = m.minC
+		newC = minC
 	} else {
 		if s.succ > 0 {
-			minC = context(s.succ)
+			newC = context(s.succ)
 		} else {
-			minC = m.createSuccessors(s, ss)
-			if minC == 0 {
-				m.minC = 0
-				return
+			newC = m.createSuccessors(minC, s, ss)
+			if newC == 0 {
+				return context(0)
 			}
 		}
 		m.orderFall--
 		if m.orderFall == 0 {
-			succ = int32(minC)
-			if m.maxC != m.minC {
+			succ = int32(newC)
+			if maxC != minC {
 				m.a.popByte()
 			}
 		}
 	}
 
-	n := m.a.contextNumStates(m.minC)
-	s0 := int(m.a.contextSummFreq(m.minC)) - n - int(s.freq-1)
-	for c := m.maxC; c != m.minC; c = m.a.contextSuffix(c) {
+	n := m.a.contextNumStates(minC)
+	s0 := int(m.a.contextSummFreq(minC)) - n - int(s.freq-1)
+	for c := maxC; c != minC; c = m.a.contextSuffix(c) {
 		var summFreq uint16
 
 		states := m.a.expandStates(c)
 		if states == nil {
-			m.minC = 0
-			return
+			return context(0)
 		}
 		if ns := len(states) - 1; ns != 1 {
 			summFreq = m.a.contextSummFreq(c)
@@ -1036,37 +1021,38 @@ func (m *model) update(s *state) {
 		states[len(states)-1] = state{sym: s.sym, freq: freq, succ: succ}
 		m.a.contextSetSummFreq(c, summFreq)
 	}
-	m.minC = minC
-	m.maxC = minC
+	return newC
 }
 
 func (m *model) ReadByte() (byte, error) {
-	if m.minC == 0 {
+	if m.c == 0 {
 		m.restart()
 	}
+	minC := m.c
+	maxC := minC
 	var s *state
 	var err error
-	if m.a.contextNumStates(m.minC) == 1 {
-		s, err = m.decodeBinSymbol()
+	if m.a.contextNumStates(minC) == 1 {
+		s, err = m.decodeBinSymbol(minC)
 	} else {
-		s, err = m.decodeSymbol1()
+		s, err = m.decodeSymbol1(minC)
 	}
 	for s == nil && err == nil {
-		n := m.a.contextNumStates(m.minC)
-		for m.a.contextNumStates(m.minC) == n {
+		n := m.a.contextNumStates(minC)
+		for m.a.contextNumStates(minC) == n {
 			m.orderFall++
-			m.minC = m.a.contextSuffix(m.minC)
-			if m.minC <= 0 {
+			minC = m.a.contextSuffix(minC)
+			if minC <= 0 {
 				return 0, errCorruptPPM
 			}
 		}
-		s, err = m.decodeSymbol2(n)
+		s, err = m.decodeSymbol2(minC, n)
 	}
 	if err != nil {
 		return 0, err
 	}
 
-	m.update(s)
+	m.c = m.update(minC, maxC, s)
 	m.prevSym = s.sym
 	return s.sym, nil
 }
