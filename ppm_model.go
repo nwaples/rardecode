@@ -813,11 +813,12 @@ func (m *model) decodeSymbol2(c context, numMasked int) (*state, error) {
 	}
 
 	hi = uint32(states[sl[0]].freq)
+	n = 0
 	for hi <= count {
-		sl = sl[1:]
-		hi += uint32(states[sl[0]].freq)
+		n++
+		hi += uint32(states[sl[n]].freq)
 	}
-	s := &states[sl[0]]
+	s := &states[sl[n]]
 
 	err := m.rc.decode(hi-uint32(s.freq), hi)
 
