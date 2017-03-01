@@ -589,7 +589,6 @@ func (m *model) restart() {
 	}
 	m.minC = c
 	m.maxC = c
-	m.prevSym = 0
 
 	for i := range m.binSumm {
 		for j, esc := range initBinEsc {
@@ -626,6 +625,7 @@ func (m *model) init(br io.ByteReader, reset bool, maxOrder, maxMB int) error {
 		return errCorruptPPM
 	}
 	m.maxOrder = maxOrder
+	m.prevSym = 0
 	m.restart()
 	return nil
 }
@@ -1074,9 +1074,7 @@ func (m *model) ReadByte() (byte, error) {
 		return 0, err
 	}
 
-	// save sym so it doesn't get overwritten by a possible restart()
-	sym := s.sym
 	m.update(s)
-	m.prevSym = sym
-	return sym, nil
+	m.prevSym = s.sym
+	return s.sym, nil
 }
