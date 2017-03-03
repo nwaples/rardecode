@@ -53,6 +53,8 @@ func (r *rar5BitReader) setLimit(n int) {
 	r.n = 0
 }
 
+// readBits returns n bits from the underlying byteReader.
+// n must be less than integer size - 8.
 func (r *rar5BitReader) readBits(n uint8) (int, error) {
 	for n > r.n {
 		if r.l == 0 {

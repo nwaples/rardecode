@@ -215,8 +215,21 @@ func (d *decoder50) decodeOffset(dr *decodeReader, i int) error {
 		offset += (2 | (slot & 1)) << bits
 
 		if bits >= 4 {
-			if bits > 4 {
-				n, err := d.br.readBits(bits - 4)
+			bits -= 4
+			if bits > 0 {
+				if intSize == 32 {
+					// bitReader can only read at most intSize-8 bits.
+					// Split read into two parts.
+					if bits > 24 {
+						n, err := d.br.readBits(24)
+						if err != nil {
+							return err
+						}
+						bits -= 24
+						offset += n << (4 + bits)
+					}
+				}
+				n, err := d.br.readBits(bits)
 				if err != nil {
 					return err
 				}
