@@ -152,6 +152,8 @@ func (r *rarBitReader) unshiftBytes() {
 	r.b = b
 }
 
+// readBits returns n bits from the underlying byteReader.
+// n must be less than integer size - 8.
 func (r *rarBitReader) readBits(n uint8) (int, error) {
 	for n > r.n {
 		if len(r.b) == 0 {
@@ -188,6 +190,20 @@ func (r *rarBitReader) readUint32() (uint32, error) {
 		return 0, err
 	}
 	if n != 1 {
+		if intSize == 32 {
+			if n == 3 {
+				// 32bit platforms may not be able to read 32 bits as r.v
+				// will need up to 7 extra bits for overflow from reading a byte.
+				// Split it into two reads.
+				n, err = r.readBits(16)
+				if err != nil {
+					return 0, err
+				}
+				m := uint32(n) << 16
+				n, err = r.readBits(16)
+				return m | uint32(n), err
+			}
+		}
 		n, err = r.readBits(4 << uint(n))
 		return uint32(n), err
 	}
