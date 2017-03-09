@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -36,8 +35,6 @@ var (
 	errArchiveEnd         = errors.New("rardecode: archive end reached")
 	errDecoderOutOfData   = errors.New("rardecode: decoder expected more data than is in packed file")
 	errOffsetNotSupported = errors.New("rardecode: volume doesn't support file offset")
-
-	reDigits = regexp.MustCompile(`\d+`)
 )
 
 type readBuf []byte
@@ -224,67 +221,59 @@ func (v *volume) offset() (int64, error) {
 	return n, nil
 }
 
-// nextVolName updates name to the next filename in the archive.
-func (v *volume) nextVolName() {
-	if v.num == 0 {
-		// check file extensions
-		i := strings.LastIndex(v.file, ".")
-		if i < 0 {
-			// no file extension, add one
-			i = len(v.file)
-			v.file += ".rar"
-		} else {
-			ext := strings.ToLower(v.file[i+1:])
-			// replace with .rar for empty extensions & self extracting archives
-			if ext == "" || ext == "exe" || ext == "sfx" {
-				v.file = v.file[:i+1] + "rar"
+func (v *volume) nextNewVolName() {
+	var inDigit bool
+	var m []int
+	for i, c := range v.file {
+		if c >= '0' && c <= '9' {
+			if !inDigit {
+				m = append(m, i)
+				inDigit = true
 			}
-		}
-		if a, ok := v.fbr.(*archive15); ok {
-			v.old = a.old
-		}
-		// new naming scheme must have volume number in filename
-		if !v.old && reDigits.FindStringIndex(v.file) == nil {
-			v.old = true
-		}
-		// For old style naming if 2nd and 3rd character of file extension is not a digit replace
-		// with "00" and ignore any trailing characters.
-		if v.old && (len(v.file) < i+4 || v.file[i+2] < '0' || v.file[i+2] > '9' || v.file[i+3] < '0' || v.file[i+3] > '9') {
-			v.file = v.file[:i+2] + "00"
-			return
+		} else if inDigit {
+			m = append(m, i)
+			inDigit = false
 		}
 	}
-	// new style volume naming
-	if !v.old {
-		// find all numbers in volume name
-		m := reDigits.FindAllStringIndex(v.file, -1)
-		if l := len(m); l > 1 {
-			// More than 1 match so assume name.part###of###.rar style.
-			// Take the last 2 matches where the first is the volume number.
-			m = m[l-2 : l]
-			if strings.Contains(v.file[m[0][1]:m[1][0]], ".") || !strings.Contains(v.file[:m[0][0]], ".") {
-				// Didn't match above style as volume had '.' between the two numbers or didnt have a '.'
-				// before the first match. Use the second number as volume number.
-				m = m[1:]
-			}
-		}
-		// extract and increment volume number
-		lo, hi := m[0][0], m[0][1]
-		n, err := strconv.Atoi(v.file[lo:hi])
-		if err != nil {
-			n = 0
-		} else {
-			n++
-		}
-		// volume number must use at least the same number of characters as previous volume
-		vol := fmt.Sprintf("%0"+fmt.Sprint(hi-lo)+"d", n)
-		v.file = v.file[:lo] + vol + v.file[hi:]
-		return
+	if inDigit {
+		m = append(m, len(v.file))
 	}
+	if l := len(m); l >= 4 {
+		// More than 1 match so assume name.part###of###.rar style.
+		// Take the last 2 matches where the first is the volume number.
+		m = m[l-4 : l]
+		if strings.Contains(v.file[m[1]:m[2]], ".") || !strings.Contains(v.file[:m[0]], ".") {
+			// Didn't match above style as volume had '.' between the two numbers or didnt have a '.'
+			// before the first match. Use the second number as volume number.
+			m = m[2:]
+		}
+	}
+	// extract and increment volume number
+	lo, hi := m[0], m[1]
+	n, err := strconv.Atoi(v.file[lo:hi])
+	if err != nil {
+		n = 0
+	} else {
+		n++
+	}
+	// volume number must use at least the same number of characters as previous volume
+	vol := fmt.Sprintf("%0"+fmt.Sprint(hi-lo)+"d", n)
+	v.file = v.file[:lo] + vol + v.file[hi:]
+}
+
+func (v *volume) nextOldVolName() {
 	// old style volume naming
 	i := strings.LastIndex(v.file, ".")
 	// get file extension
 	b := []byte(v.file[i+1:])
+
+	// If 2nd and 3rd character of file extension is not a digit replace
+	// with "00" and ignore any trailing characters.
+	if len(b) < 3 || b[1] < '0' || b[1] > '9' || b[2] < '0' || b[2] > '9' {
+		v.file = v.file[:i+2] + "00"
+		return
+	}
+
 	// start incrementing volume number digits from rightmost
 	for j := 2; j >= 0; j-- {
 		if b[j] != '9' {
@@ -301,6 +290,42 @@ func (v *volume) nextVolName() {
 		}
 	}
 	v.file = v.file[:i+1] + string(b)
+}
+
+// nextVolName updates name to the next filename in the archive.
+func (v *volume) nextVolName() {
+	if v.num == 0 {
+		// check file extensions
+		i := strings.LastIndex(v.file, ".")
+		if i < 0 {
+			// no file extension, add one
+			v.file += ".rar"
+		} else {
+			ext := strings.ToLower(v.file[i+1:])
+			// replace with .rar for empty extensions & self extracting archives
+			if ext == "" || ext == "exe" || ext == "sfx" {
+				v.file = v.file[:i+1] + "rar"
+			}
+		}
+		if a, ok := v.fbr.(*archive15); ok {
+			v.old = a.old
+		}
+		// new naming scheme must have volume number in filename
+		if !v.old {
+			v.old = true
+			for _, c := range v.file {
+				if c >= '0' && c <= '9' {
+					v.old = false
+					break
+				}
+			}
+		}
+	}
+	if v.old {
+		v.nextOldVolName()
+	} else {
+		v.nextNewVolName()
+	}
 }
 
 func (v *volume) next() (*fileBlockHeader, error) {
