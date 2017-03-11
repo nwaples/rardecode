@@ -568,7 +568,7 @@ func (f *File) Open() (io.ReadCloser, error) {
 	}
 	// open volume file
 	v := f.v
-	v.f, err = os.Open(v.dir + v.file)
+	v.f, err = os.Open(v.name)
 	if err != nil {
 		return nil, err
 	}
@@ -617,7 +617,7 @@ func List(name, password string) ([]*File, error) {
 		f.h = h
 		if f.h.last {
 			// file doesnt span volumes, only need to copy volume name
-			f.v = &volume{dir: r.v.dir, file: r.v.file}
+			f.v = &volume{name: r.v.name}
 		} else {
 			// file spans volume, copy archive volume state
 			f.v = r.v.clone()

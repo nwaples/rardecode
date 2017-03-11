@@ -200,22 +200,21 @@ type volume struct {
 	fbr  fileBlockReader
 	f    *os.File      // current file handle
 	br   *bufio.Reader // buffered reader for current volume file
-	dir  string        // volume directory
-	file string        // current volume file
+	name string        // current volume file name
 	num  int           // volume number
 	old  bool          // uses old naming scheme
 }
 
 func (v *volume) clone() *volume {
-	nv := &volume{dir: v.dir, file: v.file, num: v.num, old: v.old}
+	nv := &volume{name: v.name, num: v.num, old: v.old}
 	nv.fbr = v.fbr.clone()
 	return nv
 }
 
-func (v *volume) nextNewVolName() {
+func nextNewVolName(file string) string {
 	var inDigit bool
 	var m []int
-	for i, c := range v.file {
+	for i, c := range file {
 		if c >= '0' && c <= '9' {
 			if !inDigit {
 				m = append(m, i)
@@ -227,13 +226,13 @@ func (v *volume) nextNewVolName() {
 		}
 	}
 	if inDigit {
-		m = append(m, len(v.file))
+		m = append(m, len(file))
 	}
 	if l := len(m); l >= 4 {
 		// More than 1 match so assume name.part###of###.rar style.
 		// Take the last 2 matches where the first is the volume number.
 		m = m[l-4 : l]
-		if strings.Contains(v.file[m[1]:m[2]], ".") || !strings.Contains(v.file[:m[0]], ".") {
+		if strings.Contains(file[m[1]:m[2]], ".") || !strings.Contains(file[:m[0]], ".") {
 			// Didn't match above style as volume had '.' between the two numbers or didnt have a '.'
 			// before the first match. Use the second number as volume number.
 			m = m[2:]
@@ -241,7 +240,7 @@ func (v *volume) nextNewVolName() {
 	}
 	// extract and increment volume number
 	lo, hi := m[0], m[1]
-	n, err := strconv.Atoi(v.file[lo:hi])
+	n, err := strconv.Atoi(file[lo:hi])
 	if err != nil {
 		n = 0
 	} else {
@@ -249,20 +248,19 @@ func (v *volume) nextNewVolName() {
 	}
 	// volume number must use at least the same number of characters as previous volume
 	vol := fmt.Sprintf("%0"+fmt.Sprint(hi-lo)+"d", n)
-	v.file = v.file[:lo] + vol + v.file[hi:]
+	return file[:lo] + vol + file[hi:]
 }
 
-func (v *volume) nextOldVolName() {
+func nextOldVolName(file string) string {
 	// old style volume naming
-	i := strings.LastIndex(v.file, ".")
+	i := strings.LastIndex(file, ".")
 	// get file extension
-	b := []byte(v.file[i+1:])
+	b := []byte(file[i+1:])
 
 	// If 2nd and 3rd character of file extension is not a digit replace
 	// with "00" and ignore any trailing characters.
 	if len(b) < 3 || b[1] < '0' || b[1] > '9' || b[2] < '0' || b[2] > '9' {
-		v.file = v.file[:i+2] + "00"
-		return
+		return file[:i+2] + "00"
 	}
 
 	// start incrementing volume number digits from rightmost
@@ -280,22 +278,23 @@ func (v *volume) nextOldVolName() {
 			b[j] = '0'
 		}
 	}
-	v.file = v.file[:i+1] + string(b)
+	return file[:i+1] + string(b)
 }
 
 // nextVolName updates name to the next filename in the archive.
 func (v *volume) nextVolName() {
+	dir, file := filepath.Split(v.name)
 	if v.num == 0 {
 		// check file extensions
-		i := strings.LastIndex(v.file, ".")
+		i := strings.LastIndex(file, ".")
 		if i < 0 {
 			// no file extension, add one
-			v.file += ".rar"
+			file += ".rar"
 		} else {
-			ext := strings.ToLower(v.file[i+1:])
+			ext := strings.ToLower(file[i+1:])
 			// replace with .rar for empty extensions & self extracting archives
 			if ext == "" || ext == "exe" || ext == "sfx" {
-				v.file = v.file[:i+1] + "rar"
+				file = file[:i+1] + "rar"
 			}
 		}
 		if a, ok := v.fbr.(*archive15); ok {
@@ -304,7 +303,7 @@ func (v *volume) nextVolName() {
 		// new naming scheme must have volume number in filename
 		if !v.old {
 			v.old = true
-			for _, c := range v.file {
+			for _, c := range file {
 				if c >= '0' && c <= '9' {
 					v.old = false
 					break
@@ -313,10 +312,11 @@ func (v *volume) nextVolName() {
 		}
 	}
 	if v.old {
-		v.nextOldVolName()
+		file = nextOldVolName(file)
 	} else {
-		v.nextNewVolName()
+		file = nextNewVolName(file)
 	}
+	v.name = dir + file
 }
 
 func (v *volume) next() (*fileBlockHeader, error) {
@@ -328,7 +328,7 @@ func (v *volume) next() (*fileBlockHeader, error) {
 
 		dr := &discardReader{v.br, v.f}
 		h, err := v.fbr.next(dr)
-		if len(v.file) == 0 {
+		if len(v.name) == 0 {
 			return h, err
 		}
 
@@ -347,7 +347,7 @@ func (v *volume) next() (*fileBlockHeader, error) {
 			return nil, err
 		}
 		v.nextVolName()
-		v.f, err = os.Open(v.dir + v.file) // Open next volume file
+		v.f, err = os.Open(v.name) // Open next volume file
 		if err != nil {
 			if atEOF && os.IsNotExist(err) {
 				// volume not found so assume that the archive has ended
@@ -378,8 +378,7 @@ func (v *volume) Close() error {
 
 func openVolume(name, password string) (*volume, error) {
 	var err error
-	v := new(volume)
-	v.dir, v.file = filepath.Split(name)
+	v := &volume{name: name}
 	v.f, err = os.Open(name)
 	if err != nil {
 		return nil, err
