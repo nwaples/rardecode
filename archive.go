@@ -34,7 +34,6 @@ var (
 	errArchiveContinues   = errors.New("rardecode: archive continues in next volume")
 	errArchiveEnd         = errors.New("rardecode: archive end reached")
 	errDecoderOutOfData   = errors.New("rardecode: decoder expected more data than is in packed file")
-	errOffsetNotSupported = errors.New("rardecode: volume doesn't support file offset")
 )
 
 type readBuf []byte
@@ -85,6 +84,9 @@ func (b *readBuf) uvarint() uint64 {
 // If n bytes arent available no slice will be returned with the error value set.
 // The error is io.EOF only of 0 bytes were found, otherwise io.ErrUnexpectedEOF
 // will be returned on a short read.
+// The capacity of the slice returned by readSlice must reflect how much data was read
+// to return the n bytes (eg. an encrypted reader has to decrypt in multiples of a
+// block size so may need to read more than n bytes).
 type sliceReader interface {
 	readSlice(n int) ([]byte, error) // return the next n bytes
 	peek(n int) ([]byte, error)      // return the next n bytes withough advancing reader
@@ -131,7 +133,7 @@ func (dr *discardReader) readSlice(n int) ([]byte, error) {
 	b, err := dr.Peek(n)
 	if err == nil {
 		_, _ = dr.Discard(n)
-		return b, nil
+		return b[:n:n], nil
 	}
 	if err != bufio.ErrBufferFull {
 		if err == io.EOF && len(b) > 0 {
@@ -149,17 +151,18 @@ func (dr *discardReader) readSlice(n int) ([]byte, error) {
 
 // findSig searches for the RAR signature and version at the beginning of a file.
 // It searches no more than maxSfxSize bytes.
-func findSig(br *bufio.Reader) (int, error) {
-	for n := 0; n <= maxSfxSize; {
-		b, err := br.ReadSlice(sigPrefix[0])
-		n += len(b)
+func findSig(br *bufio.Reader) (ver int, n int64, err error) {
+	for n = 0; n <= maxSfxSize; {
+		var b []byte
+		b, err = br.ReadSlice(sigPrefix[0])
+		n += int64(len(b))
 		if err == bufio.ErrBufferFull {
 			continue
 		} else if err != nil {
 			if err == io.EOF {
 				err = errNoSig
 			}
-			return 0, err
+			return 0, n, err
 		}
 
 		b, err = br.Peek(len(sigPrefix[1:]) + 2)
@@ -167,7 +170,7 @@ func findSig(br *bufio.Reader) (int, error) {
 			if err == io.EOF {
 				err = errNoSig
 			}
-			return 0, err
+			return 0, n, err
 		}
 		if !bytes.HasPrefix(b, []byte(sigPrefix[1:])) {
 			continue
@@ -183,11 +186,12 @@ func findSig(br *bufio.Reader) (int, error) {
 		default:
 			continue
 		}
-		_, _ = br.ReadSlice('\x00')
+		b, _ = br.ReadSlice('\x00')
+		n += int64(len(b))
 
-		return ver, nil
+		return ver, n, nil
 	}
-	return 0, errNoSig
+	return 0, n, errNoSig
 }
 
 // volume extends a fileBlockReader to be used across multiple
@@ -206,19 +210,6 @@ func (v *volume) clone() *volume {
 	nv := &volume{dir: v.dir, file: v.file, num: v.num, old: v.old}
 	nv.fbr = v.fbr.clone()
 	return nv
-}
-
-func (v *volume) offset() (int64, error) {
-	// offset should only be called on volumes with v.f set.
-	if v.f == nil {
-		return 0, errOffsetNotSupported
-	}
-	n, err := v.f.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return 0, err
-	}
-	n -= int64(v.br.Buffered())
-	return n, nil
 }
 
 func (v *volume) nextNewVolName() {
@@ -366,14 +357,14 @@ func (v *volume) next() (*fileBlockHeader, error) {
 		}
 		v.num++
 		v.br.Reset(v.f)
-		ver, err := findSig(v.br)
+		ver, n, err := findSig(v.br)
 		if err != nil {
 			return nil, err
 		}
 		if v.fbr.version() != ver {
 			return nil, errVerMismatch
 		}
-		v.fbr.reset() // reset encryption
+		v.fbr.reset(n) // reset encryption
 	}
 }
 
@@ -407,15 +398,15 @@ func newFileBlockReader(br *bufio.Reader, pass string) (fileBlockReader, error) 
 	if len(runes) > maxPassword {
 		pass = string(runes[:maxPassword])
 	}
-	ver, err := findSig(br)
+	ver, n, err := findSig(br)
 	if err != nil {
 		return nil, err
 	}
 	switch ver {
 	case fileFmt15:
-		return newArchive15(br, pass), nil
+		return newArchive15(n, pass), nil
 	case fileFmt50:
-		return newArchive50(br, pass), nil
+		return newArchive50(n, pass), nil
 	}
 	return nil, errUnknownArc
 }
