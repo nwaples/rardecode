@@ -100,17 +100,14 @@ func (l *limitedByteReader) skip() error {
 
 // blocks returns a byte slice whose size is a multiple of blockSize.
 // If there is less than blockSize bytes available before EOF, then those
-// bytes will be returned. If oneBlock is set, then no more than one block
-// will be returned.
-func (l *limitedByteReader) blocks(blockSize int, oneBlock bool) ([]byte, error) {
+// bytes will be returned.
+func (l *limitedByteReader) blocks(blockSize int) ([]byte, error) {
 	if l.n == 0 {
 		return nil, io.EOF
 	}
 	var n int
 	if l.n < int64(blockSize) {
 		n = int(l.n)
-	} else if oneBlock {
-		n = blockSize
 	} else {
 		if _, err := l.br.Peek(blockSize); err != nil {
 			return nil, err
@@ -284,36 +281,35 @@ func (f *packedFileReader) Read(p []byte) (int, error) {
 
 // blocks returns a byte slice whose size is always a multiple of blockSize.
 func (f *packedFileReader) blocks(blockSize int) ([]byte, error) {
-	b, err := f.r.blocks(blockSize, false)
+	b, err := f.r.blocks(blockSize)
 	for err == io.EOF {
 		if err = f.nextBlock(); err != nil {
 			return nil, err
 		}
-		b, err = f.r.blocks(blockSize, false) // read new block data
+		b, err = f.r.blocks(blockSize) // read new block data
 	}
-	if len(b) >= blockSize {
+	if len(b) >= blockSize || err != nil {
 		return b, err
 	}
 
 	// slice returned is smaller than blockSize. Try to get the rest
 	// from the following file blocks.
-	buf := make([]byte, 0, blockSize)
-	buf = append(buf, b...)
-	for len(buf) < blockSize {
+	buf := make([]byte, blockSize)
+	n := copy(buf, b)
+	err = f.nextBlock()
+	for err == nil {
+		var nn int
 		// read a single small block of the remaining bytes
-		b, err = f.r.blocks(blockSize-len(buf), true)
+		nn, err = io.ReadFull(f.r, buf[n:])
 		switch err {
 		case nil:
-			buf = append(buf, b...)
-		case io.EOF:
-			if err = f.nextBlock(); err != nil {
-				return nil, err
-			}
-		default:
-			return nil, err
+			return buf, nil
+		case io.EOF, io.ErrUnexpectedEOF:
+			err = f.nextBlock()
 		}
+		n += nn
 	}
-	return buf, nil
+	return nil, err
 }
 
 func (f *packedFileReader) bytes() ([]byte, error) { return f.blocks(1) }
