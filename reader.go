@@ -224,10 +224,13 @@ type packedFileReader struct {
 	r *limitedByteReader // reader for current file data block
 }
 
-// nextBlockInFile reads the next file block in the current file at the current
+// nextBlock reads the next file block in the current file at the current
 // archive file position, or returns an error if there is a problem.
 // It is invalid to call this when already at the last block in the current file.
-func (f *packedFileReader) nextBlockInFile() error {
+func (f *packedFileReader) nextBlock() error {
+	if f.h.last {
+		return io.EOF
+	}
 	h, err := f.v.next()
 	if err != nil {
 		if err == io.EOF {
@@ -246,21 +249,22 @@ func (f *packedFileReader) nextBlockInFile() error {
 
 // skip advances to the end of the packed file in the RAR archive.
 func (f *packedFileReader) skip() error {
-	if f.h == nil {
+	if f.r == nil {
 		return nil
 	}
 	// skip to last block in current file
-	for !f.h.last {
+	for {
 		// discard remaining block data
 		if err := f.r.skip(); err != nil {
 			return err
 		}
-		if err := f.nextBlockInFile(); err != nil {
+		if err := f.nextBlock(); err != nil {
+			if err == io.EOF {
+				return nil
+			}
 			return err
 		}
 	}
-	// discard last block data
-	return f.r.skip()
 }
 
 // Read reads the packed data for the current file into p.
@@ -270,10 +274,7 @@ func (f *packedFileReader) Read(p []byte) (int, error) {
 		if n > 0 {
 			return n, nil
 		}
-		if f.h == nil || f.h.last {
-			return 0, io.EOF // last block so end of file
-		}
-		if err = f.nextBlockInFile(); err != nil {
+		if err = f.nextBlock(); err != nil {
 			return 0, err
 		}
 		n, err = f.r.Read(p) // read new block data
@@ -285,10 +286,7 @@ func (f *packedFileReader) Read(p []byte) (int, error) {
 func (f *packedFileReader) blocks(blockSize int) ([]byte, error) {
 	b, err := f.r.blocks(blockSize, false)
 	for err == io.EOF {
-		if f.h == nil || f.h.last {
-			return nil, io.EOF
-		}
-		if err = f.nextBlockInFile(); err != nil {
+		if err = f.nextBlock(); err != nil {
 			return nil, err
 		}
 		b, err = f.r.blocks(blockSize, false) // read new block data
@@ -308,11 +306,7 @@ func (f *packedFileReader) blocks(blockSize int) ([]byte, error) {
 		case nil:
 			buf = append(buf, b...)
 		case io.EOF:
-			if f.h == nil || f.h.last {
-				// not enough bytes available, return io.EOF
-				return nil, io.EOF
-			}
-			if err = f.nextBlockInFile(); err != nil {
+			if err = f.nextBlock(); err != nil {
 				return nil, err
 			}
 		default:
