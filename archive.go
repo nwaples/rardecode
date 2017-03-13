@@ -33,6 +33,7 @@ var (
 	errArchiveContinues  = errors.New("rardecode: archive continues in next volume")
 	errArchiveEnd        = errors.New("rardecode: archive end reached")
 	errDecoderOutOfData  = errors.New("rardecode: decoder expected more data than is in packed file")
+	errArchiveNameEmpty  = errors.New("rardecode: archive name empty")
 )
 
 type readBuf []byte
@@ -151,6 +152,34 @@ type volume struct {
 	old  bool          // uses old naming scheme
 	off  int64         // current file offset
 	ver  int           // archive file format version
+}
+
+func (v *volume) init() error {
+	if v.f == nil {
+		if len(v.name) == 0 {
+			return errArchiveNameEmpty
+		}
+		f, err := os.Open(v.name)
+		if err != nil {
+			return err
+		}
+		v.f = f
+	}
+	if v.br == nil {
+		br, ok := v.f.(*bufio.Reader)
+		if !ok {
+			br = bufio.NewReader(v.f)
+		}
+		v.br = br
+	}
+	if v.off > 0 {
+		err := v.discard(v.off)
+		if err != nil {
+			_ = v.Close()
+		}
+		return err
+	}
+	return nil
 }
 
 func (v *volume) clone() *volume {
@@ -388,13 +417,11 @@ func (v *volume) Close() error {
 }
 
 func openVolume(name, password string) (*volume, error) {
-	var err error
 	v := &volume{name: name}
-	v.f, err = os.Open(name)
+	err := v.init()
 	if err != nil {
 		return nil, err
 	}
-	v.br = bufio.NewReader(v.f)
 	v.fbr, err = newFileBlockReader(v, password)
 	if err != nil {
 		_ = v.Close() // can only return one error so ignore Close error

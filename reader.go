@@ -501,12 +501,11 @@ func (r *Reader) nextFile() error {
 // NewReader only supports single volume archives.
 // Multi-volume archives must use OpenReader.
 func NewReader(r io.Reader, password string) (*Reader, error) {
-	br, ok := r.(*bufio.Reader)
-	if !ok {
-		br = bufio.NewReader(r)
+	v := &volume{f: r}
+	err := v.init()
+	if err != nil {
+		return nil, err
 	}
-	v := &volume{f: r, br: br}
-	var err error
 	v.fbr, err = newFileBlockReader(v, password)
 	if err != nil {
 		return nil, err
@@ -549,20 +548,12 @@ func (f *File) Open() (io.ReadCloser, error) {
 	if f.Solid {
 		return nil, errSolidOpen
 	}
-	// open volume file
+	// initialize volume
 	v := f.v
-	fl, err := os.Open(v.name)
+	err := v.init()
 	if err != nil {
 		return nil, err
 	}
-	// seek to previous offset
-	_, err = fl.Seek(v.off, io.SeekStart)
-	if err != nil {
-		_ = fl.Close()
-		return nil, err
-	}
-	v.f = fl
-	v.br = bufio.NewReader(v.f)
 
 	r := new(ReadCloser)
 	r.v = v
