@@ -397,9 +397,9 @@ func (a *archive50) readBlockHeader(r sliceReader) (*blockHeader50, error) {
 }
 
 // next advances to the next file block in the archive
-func (a *archive50) next(br *discardReader) (*fileBlockHeader, error) {
+func (a *archive50) next(v *volume) (*fileBlockHeader, error) {
 	for {
-		h, err := a.readBlockHeader(br)
+		h, err := a.readBlockHeader(v)
 		if err != nil {
 			if err == io.EOF {
 				err = io.ErrUnexpectedEOF
@@ -423,7 +423,7 @@ func (a *archive50) next(br *discardReader) (*fileBlockHeader, error) {
 			return nil, errArchiveContinues
 		default:
 			// discard block data
-			err = br.discard(h.dataSize)
+			err = v.discard(h.dataSize)
 			a.offset += h.dataSize
 		}
 		if err != nil {

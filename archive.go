@@ -23,16 +23,16 @@ const (
 )
 
 var (
-	errNoSig              = errors.New("rardecode: RAR signature not found")
-	errVerMismatch        = errors.New("rardecode: volume version mistmatch")
-	errCorruptHeader      = errors.New("rardecode: corrupt block header")
-	errCorruptFileHeader  = errors.New("rardecode: corrupt file header")
-	errBadHeaderCrc       = errors.New("rardecode: bad header crc")
-	errUnknownArc         = errors.New("rardecode: unknown archive version")
-	errUnknownDecoder     = errors.New("rardecode: unknown decoder version")
-	errArchiveContinues   = errors.New("rardecode: archive continues in next volume")
-	errArchiveEnd         = errors.New("rardecode: archive end reached")
-	errDecoderOutOfData   = errors.New("rardecode: decoder expected more data than is in packed file")
+	errNoSig             = errors.New("rardecode: RAR signature not found")
+	errVerMismatch       = errors.New("rardecode: volume version mistmatch")
+	errCorruptHeader     = errors.New("rardecode: corrupt block header")
+	errCorruptFileHeader = errors.New("rardecode: corrupt file header")
+	errBadHeaderCrc      = errors.New("rardecode: bad header crc")
+	errUnknownArc        = errors.New("rardecode: unknown archive version")
+	errUnknownDecoder    = errors.New("rardecode: unknown decoder version")
+	errArchiveContinues  = errors.New("rardecode: archive continues in next volume")
+	errArchiveEnd        = errors.New("rardecode: archive end reached")
+	errDecoderOutOfData  = errors.New("rardecode: decoder expected more data than is in packed file")
 )
 
 type readBuf []byte
@@ -89,63 +89,6 @@ func (b *readBuf) uvarint() uint64 {
 type sliceReader interface {
 	readSlice(n int) ([]byte, error) // return the next n bytes
 	peek(n int) ([]byte, error)      // return the next n bytes withough advancing reader
-}
-
-type discardReader struct {
-	*bufio.Reader
-	rs io.ReadSeeker
-}
-
-func (dr *discardReader) discard(n int64) error {
-	var err error
-	l := int64(dr.Buffered())
-	if n <= l {
-		_, err = dr.Discard(int(n))
-	} else if dr.rs != nil {
-		n -= l
-		_, err = dr.rs.Seek(n, io.SeekCurrent)
-		dr.Reset(dr.rs)
-	} else {
-		for n > int64(maxInt) && err == nil {
-			_, err = dr.Discard(maxInt)
-			n -= int64(maxInt)
-		}
-		if err == nil && n > 0 {
-			_, err = dr.Discard(int(n))
-		}
-	}
-	if err == io.EOF {
-		err = io.ErrUnexpectedEOF
-	}
-	return err
-}
-
-func (dr *discardReader) peek(n int) ([]byte, error) {
-	b, err := dr.Peek(n)
-	if err == io.EOF && len(b) > 0 {
-		err = io.ErrUnexpectedEOF
-	}
-	return b, err
-}
-
-func (dr *discardReader) readSlice(n int) ([]byte, error) {
-	b, err := dr.Peek(n)
-	if err == nil {
-		_, _ = dr.Discard(n)
-		return b[:n:n], nil
-	}
-	if err != bufio.ErrBufferFull {
-		if err == io.EOF && len(b) > 0 {
-			err = io.ErrUnexpectedEOF
-		}
-		return nil, err
-	}
-	// bufio.Reader buffer is too small, create a new slice and copy to it
-	b = make([]byte, n)
-	if _, err = io.ReadFull(dr, b); err != nil {
-		return nil, err
-	}
-	return b, nil
 }
 
 // findSig searches for the RAR signature and version at the beginning of a file.
@@ -208,6 +151,62 @@ func (v *volume) clone() *volume {
 	nv := &volume{name: v.name, num: v.num, old: v.old}
 	nv.fbr = v.fbr.clone()
 	return nv
+}
+
+func (v *volume) discard(n int64) error {
+	var err error
+	l := int64(v.br.Buffered())
+	if n <= l {
+		_, err = v.br.Discard(int(n))
+	} else if v.f != nil {
+		n -= l
+		_, err = v.f.Seek(n, io.SeekCurrent)
+		v.br.Reset(v.f)
+	} else {
+		for n > int64(maxInt) && err == nil {
+			_, err = v.br.Discard(maxInt)
+			n -= int64(maxInt)
+		}
+		if err == nil && n > 0 {
+			_, err = v.br.Discard(int(n))
+		}
+	}
+	if err == io.EOF {
+		err = io.ErrUnexpectedEOF
+	}
+	return err
+}
+
+func (v *volume) peek(n int) ([]byte, error) {
+	b, err := v.br.Peek(n)
+	if err == io.EOF && len(b) > 0 {
+		err = io.ErrUnexpectedEOF
+	}
+	return b, err
+}
+
+func (v *volume) readSlice(n int) ([]byte, error) {
+	b, err := v.br.Peek(n)
+	if err == nil {
+		_, _ = v.br.Discard(n)
+		return b[:n:n], nil
+	}
+	if err != bufio.ErrBufferFull {
+		if err == io.EOF && len(b) > 0 {
+			err = io.ErrUnexpectedEOF
+		}
+		return nil, err
+	}
+	// bufio.Reader buffer is too small, create a new slice and copy to it
+	b = make([]byte, n)
+	if _, err = io.ReadFull(v.br, b); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+func (v *volume) Read(p []byte) (int, error) {
+	return v.br.Read(p)
 }
 
 func nextNewVolName(file string) string {
@@ -325,8 +324,7 @@ func (v *volume) next() (*fileBlockHeader, error) {
 	for {
 		var atEOF bool
 
-		dr := &discardReader{v.br, v.f}
-		h, err := v.fbr.next(dr)
+		h, err := v.fbr.next(v)
 		if len(v.name) == 0 {
 			return h, err
 		}

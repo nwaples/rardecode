@@ -75,8 +75,8 @@ func (l *limitedReader) bytes() ([]byte, error) {
 }
 
 type limitedByteReader struct {
-	n  int64
-	br *discardReader
+	n int64
+	v *volume
 }
 
 func (l *limitedByteReader) Read(p []byte) (int, error) {
@@ -86,7 +86,7 @@ func (l *limitedByteReader) Read(p []byte) (int, error) {
 	if int64(len(p)) > l.n {
 		p = p[0:l.n]
 	}
-	n, err := l.br.Read(p)
+	n, err := l.v.Read(p)
 	l.n -= int64(n)
 	if err == io.EOF && l.n > 0 {
 		return n, io.ErrUnexpectedEOF
@@ -95,7 +95,7 @@ func (l *limitedByteReader) Read(p []byte) (int, error) {
 }
 
 func (l *limitedByteReader) skip() error {
-	return l.br.discard(l.n)
+	return l.v.discard(l.n)
 }
 
 // blocks returns a byte slice whose size is a multiple of blockSize.
@@ -113,23 +113,23 @@ func (l *limitedByteReader) blocks(blockSize int) ([]byte, error) {
 		if l.n < int64(n) {
 			n = int(l.n)
 		}
-		b, err := l.br.peek(n)
+		b, err := l.v.peek(n)
 		if err != nil && err != bufio.ErrBufferFull {
 			return nil, err
 		}
 		n = len(b)
 		n -= n % blockSize
 	}
-	b, err := l.br.readSlice(n)
+	b, err := l.v.readSlice(n)
 	l.n -= int64(len(b))
 	return b, err
 }
 
-// limitByteReader returns a limitedByteReader that reads from r and stops with
+// limitByteReader returns a limitedByteReader that reads from v and stops with
 // io.EOF after n bytes.
-// If r returns an io.EOF before reading n bytes, io.ErrUnexpectedEOF is returned.
-func limitByteReader(r *discardReader, n int64) *limitedByteReader {
-	return &limitedByteReader{n, r}
+// If v returns an io.EOF before reading n bytes, io.ErrUnexpectedEOF is returned.
+func limitByteReader(v *volume, n int64) *limitedByteReader {
+	return &limitedByteReader{n, v}
 }
 
 // FileHeader represents a single file in a RAR archive.
@@ -210,10 +210,10 @@ type fileBlockHeader struct {
 
 // fileBlockReader provides sequential access to file blocks in a RAR archive.
 type fileBlockReader interface {
-	next(br *discardReader) (*fileBlockHeader, error) // reads the next file block header at current position
-	reset(offset int64)                               // resets encryption and file offset
-	version() int                                     // returns current archive format version
-	clone() fileBlockReader                           // makes a copy of the fileBlockReader
+	next(v *volume) (*fileBlockHeader, error) // reads the next file block header at current position
+	reset(offset int64)                       // resets encryption and file offset
+	version() int                             // returns current archive format version
+	clone() fileBlockReader                   // makes a copy of the fileBlockReader
 }
 
 // packedFileReader provides sequential access to packed files in a RAR archive.
@@ -242,7 +242,7 @@ func (f *packedFileReader) nextBlock() error {
 		return errInvalidFileBlock
 	}
 	f.h = h
-	f.r = limitByteReader(&discardReader{f.v.br, f.v.f}, h.PackedSize)
+	f.r = limitByteReader(f.v, h.PackedSize)
 	return nil
 }
 
@@ -282,7 +282,7 @@ func (f *packedFileReader) next() (*fileBlockHeader, error) {
 	if !f.h.first {
 		return nil, errInvalidFileBlock
 	}
-	f.r = limitByteReader(&discardReader{f.v.br, f.v.f}, f.h.PackedSize)
+	f.r = limitByteReader(f.v, f.h.PackedSize)
 	return f.h, nil
 }
 
@@ -337,7 +337,7 @@ func (f *packedFileReader) blocks(blockSize int) ([]byte, error) {
 func (f *packedFileReader) bytes() ([]byte, error) { return f.blocks(1) }
 
 func newPackedFileReader(v *volume, h *fileBlockHeader) *packedFileReader {
-	br := limitByteReader(&discardReader{v.br, v.f}, h.PackedSize)
+	br := limitByteReader(v, h.PackedSize)
 	return &packedFileReader{v, h, br}
 }
 

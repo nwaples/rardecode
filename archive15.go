@@ -402,10 +402,10 @@ func (a *archive15) readBlockHeader(r sliceReader) (*blockHeader15, error) {
 }
 
 // next advances to the next file block in the archive
-func (a *archive15) next(br *discardReader) (*fileBlockHeader, error) {
+func (a *archive15) next(v *volume) (*fileBlockHeader, error) {
 	for {
 		// could return an io.EOF here as 1.5 archives may not have an end block.
-		h, err := a.readBlockHeader(br)
+		h, err := a.readBlockHeader(v)
 		if err != nil {
 			return nil, err
 		}
@@ -424,7 +424,7 @@ func (a *archive15) next(br *discardReader) (*fileBlockHeader, error) {
 			return nil, errArchiveContinues
 		default:
 			a.offset += h.dataSize
-			err = br.discard(h.dataSize)
+			err = v.discard(h.dataSize)
 		}
 		if err != nil {
 			return nil, err
