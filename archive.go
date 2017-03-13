@@ -2,36 +2,23 @@ package rardecode
 
 import (
 	"bufio"
-	"bytes"
 	"errors"
-	"fmt"
+	"hash"
 	"io"
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
 )
 
 const (
-	maxSfxSize = 0x100000 // maximum number of bytes to read when searching for RAR signature
-	sigPrefix  = "Rar!\x1A\x07"
-
-	fileFmt15 = iota + 1 // Version 1.5 archive file format
-	fileFmt50            // Version 5.0 archive file format
-
-	maxInt = int(^uint(0) >> 1)
+	_ = iota
+	decode29Ver
+	decode50Ver
 )
 
 var (
-	errNoSig             = errors.New("rardecode: RAR signature not found")
-	errVerMismatch       = errors.New("rardecode: volume version mistmatch")
 	errCorruptHeader     = errors.New("rardecode: corrupt block header")
 	errCorruptFileHeader = errors.New("rardecode: corrupt file header")
 	errBadHeaderCrc      = errors.New("rardecode: bad header crc")
 	errUnknownDecoder    = errors.New("rardecode: unknown decoder version")
 	errDecoderOutOfData  = errors.New("rardecode: decoder expected more data than is in packed file")
-	errArchiveNameEmpty  = errors.New("rardecode: archive name empty")
-	errFileNameRequired  = errors.New("rardecode: filename required for multi volume archive")
 )
 
 type readBuf []byte
@@ -90,300 +77,91 @@ type sliceReader interface {
 	peek(n int) ([]byte, error)      // return the next n bytes withough advancing reader
 }
 
-// findSig searches for the RAR signature and version at the beginning of a file.
-// It searches no more than maxSfxSize bytes.
-func (v *volume) findSig() error {
-	v.off = 0
-	for v.off <= maxSfxSize {
-		b, err := v.br.ReadSlice(sigPrefix[0])
-		v.off += int64(len(b))
-		if err == bufio.ErrBufferFull {
-			continue
-		} else if err != nil {
-			if err == io.EOF {
-				err = errNoSig
-			}
-			return err
-		}
-
-		b, err = v.br.Peek(len(sigPrefix[1:]) + 2)
-		if err != nil {
-			if err == io.EOF {
-				err = errNoSig
-			}
-			return err
-		}
-		if !bytes.HasPrefix(b, []byte(sigPrefix[1:])) {
-			continue
-		}
-		b = b[len(sigPrefix)-1:]
-
-		var ver int
-		switch {
-		case b[0] == 0:
-			ver = fileFmt15
-		case b[0] == 1 && b[1] == 0:
-			ver = fileFmt50
-		default:
-			continue
-		}
-		b, err = v.br.ReadSlice('\x00')
-		v.off += int64(len(b))
-		if v.ver == 0 {
-			v.ver = ver
-		} else if v.ver != ver {
-			return errVerMismatch
-		}
-		return err
-	}
-	return errNoSig
+type limitedByteReader struct {
+	n int64
+	v *volume
 }
 
-// volume extends a fileBlockReader to be used across multiple
-// files in a multi-volume archive
-type volume struct {
-	f    io.Reader     // current file handle
-	br   *bufio.Reader // buffered reader for current volume file
-	name string        // current volume file name
-	num  int           // volume number
-	old  bool          // uses old naming scheme
-	off  int64         // current file offset
-	ver  int           // archive file format version
-}
+func (l *limitedByteReader) init() error { return l.v.init() }
 
-func (v *volume) init() error {
-	if v.f == nil {
-		if len(v.name) == 0 {
-			return errArchiveNameEmpty
-		}
-		f, err := os.Open(v.name)
-		if err != nil {
-			return err
-		}
-		v.f = f
-	}
-	if v.br == nil {
-		br, ok := v.f.(*bufio.Reader)
-		if !ok {
-			br = bufio.NewReader(v.f)
-		}
-		v.br = br
-	}
-	if v.off > 0 {
-		err := v.discard(v.off)
-		if err != nil {
-			_ = v.Close()
-		}
-		return err
-	}
-	return nil
-}
+func (l *limitedByteReader) Close() error { return l.v.Close() }
 
-func (v *volume) clone() *volume {
-	nv := new(volume)
-	*nv = *v
-	nv.f = nil
-	nv.br = nil
-	return nv
-}
-
-func (v *volume) discard(n int64) error {
-	var err error
-	v.off += n
-	l := int64(v.br.Buffered())
-	if n <= l {
-		_, err = v.br.Discard(int(n))
-	} else if sr, ok := v.f.(io.Seeker); ok {
-		n -= l
-		_, err = sr.Seek(n, io.SeekCurrent)
-		v.br.Reset(v.f)
-	} else {
-		for n > int64(maxInt) && err == nil {
-			_, err = v.br.Discard(maxInt)
-			n -= int64(maxInt)
-		}
-		if err == nil && n > 0 {
-			_, err = v.br.Discard(int(n))
-		}
+// Read reads from v and stops with io.EOF after n bytes.
+// If v returns an io.EOF before reading n bytes, io.ErrUnexpectedEOF is returned.
+func (l *limitedByteReader) Read(p []byte) (int, error) {
+	if l.n <= 0 {
+		return 0, io.EOF
 	}
-	if err == io.EOF {
-		err = io.ErrUnexpectedEOF
+	if int64(len(p)) > l.n {
+		p = p[0:l.n]
 	}
-	return err
-}
-
-func (v *volume) peek(n int) ([]byte, error) {
-	b, err := v.br.Peek(n)
-	if err == io.EOF && len(b) > 0 {
-		err = io.ErrUnexpectedEOF
+	n, err := l.v.Read(p)
+	l.n -= int64(n)
+	if err == io.EOF && l.n > 0 {
+		return n, io.ErrUnexpectedEOF
 	}
-	return b, err
-}
-
-func (v *volume) readSlice(n int) ([]byte, error) {
-	b, err := v.br.Peek(n)
-	if err == nil {
-		n, err = v.br.Discard(n)
-		v.off += int64(n)
-		return b[:n:n], err
-	}
-	if err != bufio.ErrBufferFull {
-		if err == io.EOF && len(b) > 0 {
-			err = io.ErrUnexpectedEOF
-		}
-		return nil, err
-	}
-	// bufio.Reader buffer is too small, create a new slice and copy to it
-	b = make([]byte, n)
-	if _, err = io.ReadFull(v.br, b); err != nil {
-		return nil, err
-	}
-	v.off += int64(n)
-	return b, nil
-}
-
-func (v *volume) Read(p []byte) (int, error) {
-	n, err := v.br.Read(p)
-	v.off += int64(n)
 	return n, err
 }
 
-func nextNewVolName(file string) string {
-	var inDigit bool
-	var m []int
-	for i, c := range file {
-		if c >= '0' && c <= '9' {
-			if !inDigit {
-				m = append(m, i)
-				inDigit = true
-			}
-		} else if inDigit {
-			m = append(m, i)
-			inDigit = false
-		}
+func (l *limitedByteReader) skip() error {
+	if l.n == 0 {
+		return nil
 	}
-	if inDigit {
-		m = append(m, len(file))
+	n := l.n
+	l.n = 0
+	return l.v.discard(n)
+}
+
+// blocks returns a byte slice whose size is a multiple of blockSize.
+// If there is less than blockSize bytes available before EOF, then those
+// bytes will be returned.
+func (l *limitedByteReader) blocks(blockSize int) ([]byte, error) {
+	if l.n == 0 {
+		return nil, io.EOF
 	}
-	if l := len(m); l >= 4 {
-		// More than 1 match so assume name.part###of###.rar style.
-		// Take the last 2 matches where the first is the volume number.
-		m = m[l-4 : l]
-		if strings.Contains(file[m[1]:m[2]], ".") || !strings.Contains(file[:m[0]], ".") {
-			// Didn't match above style as volume had '.' between the two numbers or didnt have a '.'
-			// before the first match. Use the second number as volume number.
-			m = m[2:]
-		}
-	}
-	// extract and increment volume number
-	lo, hi := m[0], m[1]
-	n, err := strconv.Atoi(file[lo:hi])
-	if err != nil {
-		n = 0
+	var n int
+	if l.n < int64(blockSize) {
+		n = int(l.n)
 	} else {
-		n++
+		n = maxInt
+		if l.n < int64(n) {
+			n = int(l.n)
+		}
+		b, err := l.v.peek(n)
+		if err != nil && err != bufio.ErrBufferFull {
+			return nil, err
+		}
+		n = len(b)
+		n -= n % blockSize
 	}
-	// volume number must use at least the same number of characters as previous volume
-	vol := fmt.Sprintf("%0"+fmt.Sprint(hi-lo)+"d", n)
-	return file[:lo] + vol + file[hi:]
+	b, err := l.v.readSlice(n)
+	l.n -= int64(len(b))
+	return b, err
 }
 
-func nextOldVolName(file string) string {
-	// old style volume naming
-	i := strings.LastIndex(file, ".")
-	// get file extension
-	b := []byte(file[i+1:])
-
-	// If 2nd and 3rd character of file extension is not a digit replace
-	// with "00" and ignore any trailing characters.
-	if len(b) < 3 || b[1] < '0' || b[1] > '9' || b[2] < '0' || b[2] > '9' {
-		return file[:i+2] + "00"
-	}
-
-	// start incrementing volume number digits from rightmost
-	for j := 2; j >= 0; j-- {
-		if b[j] != '9' {
-			b[j]++
-			break
-		}
-		// digit overflow
-		if j == 0 {
-			// last character before '.'
-			b[j] = 'A'
-		} else {
-			// set to '0' and loop to next character
-			b[j] = '0'
-		}
-	}
-	return file[:i+1] + string(b)
+// fileBlockHeader represents a file block in a RAR archive.
+// Files may comprise one or more file blocks.
+// Solid files retain decode tables and dictionary from previous solid files in the archive.
+type fileBlockHeader struct {
+	first    bool      // first block in file
+	last     bool      // last block in file
+	arcSolid bool      // archive is solid
+	winSize  uint      // log base 2 of decode window size
+	hash     hash.Hash // hash used for file checksum
+	hashKey  []byte    // optional hmac key to be used calculate file checksum
+	sum      []byte    // expected checksum for file contents
+	decVer   int       // decoder to use for file
+	key      []byte    // key for AES, non-empty if file encrypted
+	iv       []byte    // iv for AES, non-empty if file encrypted
+	FileHeader
 }
 
-// nextVolName updates name to the next filename in the archive.
-func (v *volume) nextVolName() {
-	dir, file := filepath.Split(v.name)
-	if v.num == 0 {
-		// check file extensions
-		i := strings.LastIndex(file, ".")
-		if i < 0 {
-			// no file extension, add one
-			file += ".rar"
-		} else {
-			ext := strings.ToLower(file[i+1:])
-			// replace with .rar for empty extensions & self extracting archives
-			if ext == "" || ext == "exe" || ext == "sfx" {
-				file = file[:i+1] + "rar"
-			}
-		}
-		// new naming scheme must have volume number in filename
-		if !v.old {
-			v.old = true
-			for _, c := range file {
-				if c >= '0' && c <= '9' {
-					v.old = false
-					break
-				}
-			}
-		}
-	}
-	if v.old {
-		file = nextOldVolName(file)
-	} else {
-		file = nextNewVolName(file)
-	}
-	v.name = dir + file
-}
-
-func (v *volume) next() error {
-	err := v.Close()
-	if err != nil {
-		return err
-	}
-	if len(v.name) == 0 {
-		return errFileNameRequired
-	}
-	v.nextVolName()
-	v.num++
-	v.f, err = os.Open(v.name) // Open next volume file
-	if err != nil {
-		return err
-	}
-	v.br.Reset(v.f)
-	err = v.findSig()
-	if err != nil {
-		_ = v.Close()
-	}
-	return err
-}
-
-func (v *volume) Close() error {
-	// v.f may be nil if os.Open fails in next().
-	// We only close if we opened it (ie. v.name provided).
-	if v.f != nil && len(v.name) > 0 {
-		if c, ok := v.f.(io.Closer); ok {
-			err := c.Close()
-			v.f = nil // set to nil so we can only close v.f once
-			return err
-		}
-	}
-	return nil
+// fileBlockReader provides sequential access to file blocks in a RAR archive.
+type fileBlockReader interface {
+	io.Reader                             // provides read access to current file block data
+	io.Closer                             // closes volume file opened by fileBlockReader
+	blocks(blockSize int) ([]byte, error) // returns a byte slice in multiples of blockSize from current block
+	next() (*fileBlockHeader, error)      // advances to the next file block
+	clone() fileBlockReader               // makes a copy of the fileBlockReader
+	init() error                          // initializes a cloned fileBlockReader
 }

@@ -1,7 +1,6 @@
 package rardecode
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -25,10 +24,6 @@ const (
 
 const (
 	maxPassword = int(128)
-
-	_ = iota
-	decode29Ver
-	decode50Ver
 )
 
 var (
@@ -39,103 +34,6 @@ var (
 	errSolidOpen        = errors.New("rardecode: solid files don't support Open")
 	errUnknownArc       = errors.New("rardecode: unknown archive version")
 )
-
-type byteReader interface {
-	io.Reader
-	bytes() ([]byte, error)
-}
-
-type limitedReader struct {
-	r        byteReader
-	n        int64 // bytes remaining
-	shortErr error // error returned when r returns io.EOF with n > 0
-}
-
-func (l *limitedReader) Read(p []byte) (int, error) {
-	if l.n <= 0 {
-		return 0, io.EOF
-	}
-	if int64(len(p)) > l.n {
-		p = p[0:l.n]
-	}
-	n, err := l.r.Read(p)
-	l.n -= int64(n)
-	if err == io.EOF && l.n > 0 {
-		return n, l.shortErr
-	}
-	return n, err
-}
-
-func (l *limitedReader) bytes() ([]byte, error) {
-	b, err := l.r.bytes()
-	if n := len(b); int64(n) > l.n {
-		b = b[:int(l.n)]
-	}
-	l.n -= int64(len(b))
-	return b, err
-}
-
-type limitedByteReader struct {
-	n int64
-	v *volume
-}
-
-func (l *limitedByteReader) init() error { return l.v.init() }
-
-func (l *limitedByteReader) Close() error { return l.v.Close() }
-
-// Read reads from v and stops with io.EOF after n bytes.
-// If v returns an io.EOF before reading n bytes, io.ErrUnexpectedEOF is returned.
-func (l *limitedByteReader) Read(p []byte) (int, error) {
-	if l.n <= 0 {
-		return 0, io.EOF
-	}
-	if int64(len(p)) > l.n {
-		p = p[0:l.n]
-	}
-	n, err := l.v.Read(p)
-	l.n -= int64(n)
-	if err == io.EOF && l.n > 0 {
-		return n, io.ErrUnexpectedEOF
-	}
-	return n, err
-}
-
-func (l *limitedByteReader) skip() error {
-	if l.n == 0 {
-		return nil
-	}
-	n := l.n
-	l.n = 0
-	return l.v.discard(n)
-}
-
-// blocks returns a byte slice whose size is a multiple of blockSize.
-// If there is less than blockSize bytes available before EOF, then those
-// bytes will be returned.
-func (l *limitedByteReader) blocks(blockSize int) ([]byte, error) {
-	if l.n == 0 {
-		return nil, io.EOF
-	}
-	var n int
-	if l.n < int64(blockSize) {
-		n = int(l.n)
-	} else {
-		n = maxInt
-		if l.n < int64(n) {
-			n = int(l.n)
-		}
-		b, err := l.v.peek(n)
-		if err != nil && err != bufio.ErrBufferFull {
-			return nil, err
-		}
-		n = len(b)
-		n -= n % blockSize
-	}
-	b, err := l.v.readSlice(n)
-	l.n -= int64(len(b))
-	return b, err
-}
 
 // FileHeader represents a single file in a RAR archive.
 type FileHeader struct {
@@ -195,31 +93,9 @@ func (f *FileHeader) Mode() os.FileMode {
 	return m
 }
 
-// fileBlockHeader represents a file block in a RAR archive.
-// Files may comprise one or more file blocks.
-// Solid files retain decode tables and dictionary from previous solid files in the archive.
-type fileBlockHeader struct {
-	first    bool      // first block in file
-	last     bool      // last block in file
-	arcSolid bool      // archive is solid
-	winSize  uint      // log base 2 of decode window size
-	hash     hash.Hash // hash used for file checksum
-	hashKey  []byte    // optional hmac key to be used calculate file checksum
-	sum      []byte    // expected checksum for file contents
-	decVer   int       // decoder to use for file
-	key      []byte    // key for AES, non-empty if file encrypted
-	iv       []byte    // iv for AES, non-empty if file encrypted
-	FileHeader
-}
-
-// fileBlockReader provides sequential access to file blocks in a RAR archive.
-type fileBlockReader interface {
-	io.Reader                             // provides read access to current file block data
-	io.Closer                             // closes volume file opened by fileBlockReader
-	blocks(blockSize int) ([]byte, error) // returns a byte slice in multiples of blockSize from current block
-	next() (*fileBlockHeader, error)      // advances to the next file block
-	clone() fileBlockReader               // makes a copy of the fileBlockReader
-	init() error                          // initializes a cloned fileBlockReader
+type byteReader interface {
+	io.Reader
+	bytes() ([]byte, error)
 }
 
 // packedFileReader provides sequential access to packed files in a RAR archive.
@@ -342,6 +218,36 @@ func newPackedFileReader(v *volume, pass string) (*packedFileReader, error) {
 		return nil, errUnknownArc
 	}
 	return &packedFileReader{r: fbr}, nil
+}
+
+type limitedReader struct {
+	r        byteReader
+	n        int64 // bytes remaining
+	shortErr error // error returned when r returns io.EOF with n > 0
+}
+
+func (l *limitedReader) Read(p []byte) (int, error) {
+	if l.n <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > l.n {
+		p = p[0:l.n]
+	}
+	n, err := l.r.Read(p)
+	l.n -= int64(n)
+	if err == io.EOF && l.n > 0 {
+		return n, l.shortErr
+	}
+	return n, err
+}
+
+func (l *limitedReader) bytes() ([]byte, error) {
+	b, err := l.r.bytes()
+	if n := len(b); int64(n) > l.n {
+		b = b[:int(l.n)]
+	}
+	l.n -= int64(len(b))
+	return b, err
 }
 
 type checksumReader struct {
