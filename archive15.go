@@ -284,7 +284,7 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 		if len(b) < 8 {
 			return nil, errCorruptFileHeader
 		}
-		f.PackedSize |= int64(b.uint32()) << 32
+		_ = b.uint32() // already read large PackedSize in readBlockHeader
 		f.UnPackedSize |= int64(b.uint32()) << 32
 		f.UnKnownSize = f.UnPackedSize == -1
 	} else if int32(f.UnPackedSize) == -1 {
@@ -405,7 +405,7 @@ func (a *archive15) readBlockHeader() (*blockHeader15, error) {
 		}
 		h.dataSize = int64(h.data.uint32())
 	}
-	if h.htype == blockService && h.flags&fileLargeData > 0 {
+	if (h.htype == blockService || h.htype == blockFile) && h.flags&fileLargeData > 0 {
 		if len(h.data) < 25 {
 			return nil, errCorruptHeader
 		}
