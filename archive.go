@@ -144,7 +144,7 @@ func (v *volume) findSig() error {
 // files in a multi-volume archive
 type volume struct {
 	fbr  fileBlockReader
-	f    *os.File      // current file handle
+	f    io.Reader     // current file handle
 	br   *bufio.Reader // buffered reader for current volume file
 	name string        // current volume file name
 	num  int           // volume number
@@ -168,9 +168,9 @@ func (v *volume) discard(n int64) error {
 	l := int64(v.br.Buffered())
 	if n <= l {
 		_, err = v.br.Discard(int(n))
-	} else if v.f != nil {
+	} else if sr, ok := v.f.(io.Seeker); ok {
 		n -= l
-		_, err = v.f.Seek(n, io.SeekCurrent)
+		_, err = sr.Seek(n, io.SeekCurrent)
 		v.br.Reset(v.f)
 	} else {
 		for n > int64(maxInt) && err == nil {
@@ -353,7 +353,7 @@ func (v *volume) next() (*fileBlockHeader, error) {
 			return h, err
 		}
 
-		err = v.f.Close()
+		err = v.Close()
 		if err != nil {
 			return nil, err
 		}
@@ -377,11 +377,14 @@ func (v *volume) next() (*fileBlockHeader, error) {
 }
 
 func (v *volume) Close() error {
-	// may be nil if os.Open fails in next()
-	if v.f == nil {
-		return nil
+	// v.f may be nil if os.Open fails in next().
+	// We only close if we opened it (ie. v.name provided).
+	if v.f != nil && len(v.name) > 0 {
+		if c, ok := v.f.(io.Closer); ok {
+			return c.Close()
+		}
 	}
-	return v.f.Close()
+	return nil
 }
 
 func openVolume(name, password string) (*volume, error) {
@@ -394,7 +397,7 @@ func openVolume(name, password string) (*volume, error) {
 	v.br = bufio.NewReader(v.f)
 	v.fbr, err = newFileBlockReader(v, password)
 	if err != nil {
-		_ = v.f.Close() // can only return one error so ignore Close error
+		_ = v.Close() // can only return one error so ignore Close error
 		return nil, err
 	}
 	return v, nil

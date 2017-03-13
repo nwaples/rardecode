@@ -505,7 +505,7 @@ func NewReader(r io.Reader, password string) (*Reader, error) {
 	if !ok {
 		br = bufio.NewReader(r)
 	}
-	v := &volume{br: br}
+	v := &volume{f: r, br: br}
 	var err error
 	v.fbr, err = newFileBlockReader(v, password)
 	if err != nil {
@@ -546,22 +546,22 @@ type File struct {
 // of the preceding files in the archive. Use OpenReader and Next to access Solid file
 // contents instead.
 func (f *File) Open() (io.ReadCloser, error) {
-	var err error
 	if f.Solid {
 		return nil, errSolidOpen
 	}
 	// open volume file
 	v := f.v
-	v.f, err = os.Open(v.name)
+	fl, err := os.Open(v.name)
 	if err != nil {
 		return nil, err
 	}
 	// seek to previous offset
-	_, err = v.f.Seek(v.off, io.SeekStart)
+	_, err = fl.Seek(v.off, io.SeekStart)
 	if err != nil {
-		_ = v.f.Close()
+		_ = fl.Close()
 		return nil, err
 	}
+	v.f = fl
 	v.br = bufio.NewReader(v.f)
 
 	r := new(ReadCloser)
@@ -570,7 +570,7 @@ func (f *File) Open() (io.ReadCloser, error) {
 	// setup reader
 	err = r.nextFile()
 	if err != nil {
-		_ = v.f.Close()
+		_ = v.Close()
 		return nil, err
 	}
 	return r, nil
