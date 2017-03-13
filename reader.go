@@ -109,13 +109,15 @@ func (l *limitedByteReader) blocks(blockSize int) ([]byte, error) {
 	if l.n < int64(blockSize) {
 		n = int(l.n)
 	} else {
-		if _, err := l.br.Peek(blockSize); err != nil {
-			return nil, err
-		}
-		n = l.br.Buffered()
-		if int64(n) > l.n {
+		n = maxInt
+		if l.n < int64(n) {
 			n = int(l.n)
 		}
+		b, err := l.br.peek(n)
+		if err != nil && err != bufio.ErrBufferFull {
+			return nil, err
+		}
+		n = len(b)
 		n -= n % blockSize
 	}
 	b, err := l.br.readSlice(n)
