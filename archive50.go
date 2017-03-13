@@ -87,7 +87,6 @@ func newLittleEndianCRC32() hash.Hash32 {
 
 // archive50 implements fileBlockReader for RAR 5 file format archives
 type archive50 struct {
-	offset   int64
 	pass     []byte
 	blockKey []byte                // key used to encrypt blocks
 	multi    bool                  // archive is multi-volume
@@ -298,8 +297,6 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 			return nil, err
 		}
 	}
-	f.offset = a.offset
-	a.offset += f.PackedSize
 	return f, nil
 }
 
@@ -339,7 +336,6 @@ func (a *archive50) readBlockHeader(r sliceReader) (*blockHeader50, error) {
 			return nil, err
 		}
 		r = newAesSliceReader(r, a.blockKey, iv)
-		a.offset += 16
 	}
 	var b readBuf
 	var err error
@@ -357,7 +353,6 @@ func (a *archive50) readBlockHeader(r sliceReader) (*blockHeader50, error) {
 	if err != nil {
 		return nil, err
 	}
-	a.offset += int64(cap(b))
 
 	// check header crc
 	_, _ = hash.Write(b[4:])
@@ -424,7 +419,6 @@ func (a *archive50) next(v *volume) (*fileBlockHeader, error) {
 		default:
 			// discard block data
 			err = v.discard(h.dataSize)
-			a.offset += h.dataSize
 		}
 		if err != nil {
 			return nil, err
@@ -434,15 +428,13 @@ func (a *archive50) next(v *volume) (*fileBlockHeader, error) {
 
 func (a *archive50) version() int { return fileFmt50 }
 
-func (a *archive50) reset(offset int64) {
+func (a *archive50) reset() {
 	a.blockKey = nil // reset encryption when opening new volume file
-	a.offset = offset
 }
 
 // newArchive50 creates a new fileBlockReader for a Version 5 archive.
-func newArchive50(offset int64, password string) fileBlockReader {
+func newArchive50(password string) fileBlockReader {
 	a := new(archive50)
 	a.pass = []byte(password)
-	a.offset = offset
 	return a
 }

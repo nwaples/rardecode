@@ -61,7 +61,6 @@ type blockHeader15 struct {
 
 // archive15 implements fileBlockReader for RAR 1.5 file format archives
 type archive15 struct {
-	offset    int64
 	multi     bool // archive is multi-volume
 	old       bool // archive uses old naming scheme
 	solid     bool // archive is a solid archive
@@ -317,8 +316,6 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 	if h.flags&fileExtTime > 0 {
 		readExtTimes(f, &b)
 	}
-	f.offset = a.offset
-	a.offset += f.PackedSize
 
 	if !f.first {
 		return f, nil
@@ -351,7 +348,6 @@ func (a *archive15) readBlockHeader(r sliceReader) (*blockHeader15, error) {
 		}
 		key, iv := a.getKeys(salt)
 		r = newAesSliceReader(r, key, iv)
-		a.offset += saltSize
 	}
 	var b readBuf
 	var err error
@@ -372,7 +368,6 @@ func (a *archive15) readBlockHeader(r sliceReader) (*blockHeader15, error) {
 		return nil, errCorruptHeader
 	}
 	h.data, err = r.readSlice(size)
-	a.offset += int64(cap(h.data))
 	if err != nil {
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
@@ -423,7 +418,6 @@ func (a *archive15) next(v *volume) (*fileBlockHeader, error) {
 			}
 			return nil, errArchiveContinues
 		default:
-			a.offset += h.dataSize
 			err = v.discard(h.dataSize)
 		}
 		if err != nil {
@@ -434,15 +428,13 @@ func (a *archive15) next(v *volume) (*fileBlockHeader, error) {
 
 func (a *archive15) version() int { return fileFmt15 }
 
-func (a *archive15) reset(offset int64) {
-	a.offset = offset
+func (a *archive15) reset() {
 	a.encrypted = false // reset encryption when opening new volume file
 }
 
 // newArchive15 creates a new fileBlockReader for a Version 1.5 archive
-func newArchive15(offset int64, password string) fileBlockReader {
+func newArchive15(password string) fileBlockReader {
 	a := new(archive15)
 	a.pass = utf16.Encode([]rune(password)) // convert to UTF-16
-	a.offset = offset
 	return a
 }

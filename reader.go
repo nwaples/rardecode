@@ -204,14 +204,13 @@ type fileBlockHeader struct {
 	decVer   int       // decoder to use for file
 	key      []byte    // key for AES, non-empty if file encrypted
 	iv       []byte    // iv for AES, non-empty if file encrypted
-	offset   int64     // offset for block data in current volume
 	FileHeader
 }
 
 // fileBlockReader provides sequential access to file blocks in a RAR archive.
 type fileBlockReader interface {
 	next(v *volume) (*fileBlockHeader, error) // reads the next file block header at current position
-	reset(offset int64)                       // resets encryption and file offset
+	reset()                                   // resets encryption and file offset
 	version() int                             // returns current archive format version
 	clone() fileBlockReader                   // makes a copy of the fileBlockReader
 }
@@ -507,11 +506,12 @@ func NewReader(r io.Reader, password string) (*Reader, error) {
 	if !ok {
 		br = bufio.NewReader(r)
 	}
-	fbr, err := newFileBlockReader(br, password)
+	v := &volume{br: br}
+	var err error
+	v.fbr, err = newFileBlockReader(v, password)
 	if err != nil {
 		return nil, err
 	}
-	v := &volume{fbr: fbr, br: br}
 	return &Reader{v: v}, nil
 }
 
@@ -558,7 +558,7 @@ func (f *File) Open() (io.ReadCloser, error) {
 		return nil, err
 	}
 	// seek to previous offset
-	_, err = v.f.Seek(f.h.offset, io.SeekStart)
+	_, err = v.f.Seek(v.off, io.SeekStart)
 	if err != nil {
 		_ = v.f.Close()
 		return nil, err
@@ -604,7 +604,7 @@ func List(name, password string) ([]*File, error) {
 		f.h = h
 		if f.h.last {
 			// file doesnt span volumes, only need to copy volume name
-			f.v = &volume{name: v.name}
+			f.v = &volume{name: v.name, off: v.off}
 		} else {
 			// file spans volume, copy archive volume state
 			f.v = v.clone()
