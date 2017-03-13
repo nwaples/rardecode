@@ -37,6 +37,7 @@ var (
 	errUnexpectedArcEnd = errors.New("rardecode: unexpected end of archive")
 	errBadFileChecksum  = errors.New("rardecode: bad file checksum")
 	errSolidOpen        = errors.New("rardecode: solid files don't support Open")
+	errUnknownArc       = errors.New("rardecode: unknown archive version")
 )
 
 type byteReader interface {

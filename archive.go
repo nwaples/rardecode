@@ -28,7 +28,6 @@ var (
 	errCorruptHeader     = errors.New("rardecode: corrupt block header")
 	errCorruptFileHeader = errors.New("rardecode: corrupt file header")
 	errBadHeaderCrc      = errors.New("rardecode: bad header crc")
-	errUnknownArc        = errors.New("rardecode: unknown archive version")
 	errUnknownDecoder    = errors.New("rardecode: unknown decoder version")
 	errDecoderOutOfData  = errors.New("rardecode: decoder expected more data than is in packed file")
 	errArchiveNameEmpty  = errors.New("rardecode: archive name empty")
