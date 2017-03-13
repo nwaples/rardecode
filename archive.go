@@ -381,7 +381,9 @@ func (v *volume) Close() error {
 	// We only close if we opened it (ie. v.name provided).
 	if v.f != nil && len(v.name) > 0 {
 		if c, ok := v.f.(io.Closer); ok {
-			return c.Close()
+			err := c.Close()
+			v.f = nil // set to nil so we can only close v.f once
+			return err
 		}
 	}
 	return nil
