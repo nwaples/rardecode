@@ -30,10 +30,9 @@ var (
 	errBadHeaderCrc      = errors.New("rardecode: bad header crc")
 	errUnknownArc        = errors.New("rardecode: unknown archive version")
 	errUnknownDecoder    = errors.New("rardecode: unknown decoder version")
-	errArchiveContinues  = errors.New("rardecode: archive continues in next volume")
-	errArchiveEnd        = errors.New("rardecode: archive end reached")
 	errDecoderOutOfData  = errors.New("rardecode: decoder expected more data than is in packed file")
 	errArchiveNameEmpty  = errors.New("rardecode: archive name empty")
+	errFileNameRequired  = errors.New("rardecode: filename required for multi volume archive")
 )
 
 type readBuf []byte
@@ -144,7 +143,6 @@ func (v *volume) findSig() error {
 // volume extends a fileBlockReader to be used across multiple
 // files in a multi-volume archive
 type volume struct {
-	fbr  fileBlockReader
 	f    io.Reader     // current file handle
 	br   *bufio.Reader // buffered reader for current volume file
 	name string        // current volume file name
@@ -187,7 +185,6 @@ func (v *volume) clone() *volume {
 	*nv = *v
 	nv.f = nil
 	nv.br = nil
-	nv.fbr = v.fbr.clone()
 	return nv
 }
 
@@ -338,9 +335,6 @@ func (v *volume) nextVolName() {
 				file = file[:i+1] + "rar"
 			}
 		}
-		if a, ok := v.fbr.(*archive15); ok {
-			v.old = a.old
-		}
 		// new naming scheme must have volume number in filename
 		if !v.old {
 			v.old = true
@@ -360,49 +354,26 @@ func (v *volume) nextVolName() {
 	v.name = dir + file
 }
 
-func (v *volume) next() (*fileBlockHeader, error) {
-	if v.fbr == nil {
-		return nil, io.EOF
+func (v *volume) next() error {
+	err := v.Close()
+	if err != nil {
+		return err
 	}
-	for {
-		var atEOF bool
-
-		h, err := v.fbr.next(v)
-		if len(v.name) == 0 {
-			return h, err
-		}
-
-		switch err {
-		case errArchiveContinues:
-		case io.EOF:
-			// Read all of volume without finding an end block. The only way
-			// to tell if the archive continues is to try to open the next volume.
-			atEOF = true
-		default:
-			return h, err
-		}
-
-		err = v.Close()
-		if err != nil {
-			return nil, err
-		}
-		v.nextVolName()
-		v.f, err = os.Open(v.name) // Open next volume file
-		if err != nil {
-			if atEOF && os.IsNotExist(err) {
-				// volume not found so assume that the archive has ended
-				return nil, io.EOF
-			}
-			return nil, err
-		}
-		v.num++
-		v.br.Reset(v.f)
-		err = v.findSig()
-		if err != nil {
-			return nil, err
-		}
-		v.fbr.reset() // reset encryption
+	if len(v.name) == 0 {
+		return errFileNameRequired
 	}
+	v.nextVolName()
+	v.num++
+	v.f, err = os.Open(v.name) // Open next volume file
+	if err != nil {
+		return err
+	}
+	v.br.Reset(v.f)
+	err = v.findSig()
+	if err != nil {
+		_ = v.Close()
+	}
+	return err
 }
 
 func (v *volume) Close() error {
@@ -414,36 +385,4 @@ func (v *volume) Close() error {
 		}
 	}
 	return nil
-}
-
-func openVolume(name, password string) (*volume, error) {
-	v := &volume{name: name}
-	err := v.init()
-	if err != nil {
-		return nil, err
-	}
-	v.fbr, err = newFileBlockReader(v, password)
-	if err != nil {
-		_ = v.Close() // can only return one error so ignore Close error
-		return nil, err
-	}
-	return v, nil
-}
-
-func newFileBlockReader(v *volume, pass string) (fileBlockReader, error) {
-	runes := []rune(pass)
-	if len(runes) > maxPassword {
-		pass = string(runes[:maxPassword])
-	}
-	err := v.findSig()
-	if err != nil {
-		return nil, err
-	}
-	switch v.ver {
-	case fileFmt15:
-		return newArchive15(pass), nil
-	case fileFmt50:
-		return newArchive50(pass), nil
-	}
-	return nil, errUnknownArc
 }

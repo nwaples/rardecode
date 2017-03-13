@@ -87,6 +87,7 @@ func newLittleEndianCRC32() hash.Hash32 {
 
 // archive50 implements fileBlockReader for RAR 5 file format archives
 type archive50 struct {
+	limitedByteReader
 	pass     []byte
 	blockKey []byte                // key used to encrypt blocks
 	multi    bool                  // archive is multi-volume
@@ -101,6 +102,7 @@ type archive50 struct {
 func (a *archive50) clone() fileBlockReader {
 	na := new(archive50)
 	*na = *a
+	na.v = na.v.clone()
 	return na
 }
 
@@ -328,7 +330,8 @@ func (a *archive50) parseEncryptionBlock(b readBuf) error {
 	return nil
 }
 
-func (a *archive50) readBlockHeader(r sliceReader) (*blockHeader50, error) {
+func (a *archive50) readBlockHeader() (*blockHeader50, error) {
+	r := sliceReader(a.v)
 	if a.blockKey != nil {
 		// block is encrypted
 		iv, err := r.readSlice(16)
@@ -392,15 +395,23 @@ func (a *archive50) readBlockHeader(r sliceReader) (*blockHeader50, error) {
 }
 
 // next advances to the next file block in the archive
-func (a *archive50) next(v *volume) (*fileBlockHeader, error) {
+func (a *archive50) next() (*fileBlockHeader, error) {
 	for {
-		h, err := a.readBlockHeader(v)
+		// skip current data
+		if err := a.skip(); err != nil {
+			return nil, err
+		}
+		// get next block header
+		h, err := a.readBlockHeader()
 		if err != nil {
 			if err == io.EOF {
 				err = io.ErrUnexpectedEOF
 			}
 			return nil, err
 		}
+		// set data block size
+		a.n = h.dataSize
+
 		switch h.htype {
 		case block5File:
 			return a.parseFileHeader(h)
@@ -413,12 +424,10 @@ func (a *archive50) next(v *volume) (*fileBlockHeader, error) {
 		case block5End:
 			flags := h.data.uvarint()
 			if flags&endArc5NotLast == 0 || !a.multi {
-				return nil, errArchiveEnd
+				return nil, io.EOF
 			}
-			return nil, errArchiveContinues
-		default:
-			// discard block data
-			err = v.discard(h.dataSize)
+			a.blockKey = nil // reset encryption when opening new volume file
+			err = a.v.next()
 		}
 		if err != nil {
 			return nil, err
@@ -426,13 +435,10 @@ func (a *archive50) next(v *volume) (*fileBlockHeader, error) {
 	}
 }
 
-func (a *archive50) reset() {
-	a.blockKey = nil // reset encryption when opening new volume file
-}
-
 // newArchive50 creates a new fileBlockReader for a Version 5 archive.
-func newArchive50(password string) fileBlockReader {
+func newArchive50(v *volume, password string) fileBlockReader {
 	a := new(archive50)
 	a.pass = []byte(password)
+	a.v = v
 	return a
 }

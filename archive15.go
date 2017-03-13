@@ -6,6 +6,7 @@ import (
 	"errors"
 	"hash/crc32"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -61,8 +62,8 @@ type blockHeader15 struct {
 
 // archive15 implements fileBlockReader for RAR 1.5 file format archives
 type archive15 struct {
+	limitedByteReader
 	multi     bool // archive is multi-volume
-	old       bool // archive uses old naming scheme
 	solid     bool // archive is a solid archive
 	encrypted bool
 	pass      []uint16              // password in UTF-16
@@ -76,6 +77,7 @@ type archive15 struct {
 func (a *archive15) clone() fileBlockReader {
 	na := new(archive15)
 	*na = *a
+	na.v = na.v.clone()
 	return na
 }
 
@@ -340,7 +342,8 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 
 // readBlockHeader returns the next block header in the archive.
 // It will return io.EOF if there were no bytes read.
-func (a *archive15) readBlockHeader(r sliceReader) (*blockHeader15, error) {
+func (a *archive15) readBlockHeader() (*blockHeader15, error) {
+	r := sliceReader(a.v)
 	if a.encrypted {
 		salt, err := r.readSlice(saltSize)
 		if err != nil {
@@ -397,42 +400,59 @@ func (a *archive15) readBlockHeader(r sliceReader) (*blockHeader15, error) {
 }
 
 // next advances to the next file block in the archive
-func (a *archive15) next(v *volume) (*fileBlockHeader, error) {
+func (a *archive15) next() (*fileBlockHeader, error) {
 	for {
-		// could return an io.EOF here as 1.5 archives may not have an end block.
-		h, err := a.readBlockHeader(v)
-		if err != nil {
+		// skip current data
+		if err := a.skip(); err != nil {
 			return nil, err
 		}
+		// could return an io.EOF here as 1.5 archives may not have an end block.
+		h, err := a.readBlockHeader()
+		if err != nil {
+			// if reached end of file without an end block try to open next volume
+			if err == io.EOF {
+				a.encrypted = false // reset encryption when opening new volume file
+				err = a.v.next()
+				if err == nil {
+					continue
+				}
+				// new volume doesnt exist, assume end of archive
+				if os.IsNotExist(err) {
+					return nil, io.EOF
+				}
+			}
+			return nil, err
+		}
+		// set data block size
+		a.n = h.dataSize
+
 		switch h.htype {
 		case blockFile:
 			return a.parseFileHeader(h)
 		case blockArc:
 			a.encrypted = h.flags&arcEncrypted > 0
 			a.multi = h.flags&arcVolume > 0
-			a.old = h.flags&arcNewNaming == 0
+			if a.v.num == 0 {
+				a.v.old = h.flags&arcNewNaming == 0
+			}
 			a.solid = h.flags&arcSolid > 0
 		case blockEnd:
 			if h.flags&endArcNotLast == 0 || !a.multi {
-				return nil, errArchiveEnd
+				return nil, io.EOF
 			}
-			return nil, errArchiveContinues
-		default:
-			err = v.discard(h.dataSize)
-		}
-		if err != nil {
-			return nil, err
+			a.encrypted = false // reset encryption when opening new volume file
+			err = a.v.next()
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 }
 
-func (a *archive15) reset() {
-	a.encrypted = false // reset encryption when opening new volume file
-}
-
 // newArchive15 creates a new fileBlockReader for a Version 1.5 archive
-func newArchive15(password string) fileBlockReader {
+func newArchive15(v *volume, password string) fileBlockReader {
 	a := new(archive15)
 	a.pass = utf16.Encode([]rune(password)) // convert to UTF-16
+	a.v = v
 	return a
 }
