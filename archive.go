@@ -93,10 +93,9 @@ type sliceReader interface {
 
 // findSig searches for the RAR signature and version at the beginning of a file.
 // It searches no more than maxSfxSize bytes.
-func (v *volume) findSig() (ver int, err error) {
+func (v *volume) findSig() error {
 	v.off = 0
 	for v.off <= maxSfxSize {
-		var b []byte
 		b, err := v.br.ReadSlice(sigPrefix[0])
 		v.off += int64(len(b))
 		if err == bufio.ErrBufferFull {
@@ -105,7 +104,7 @@ func (v *volume) findSig() (ver int, err error) {
 			if err == io.EOF {
 				err = errNoSig
 			}
-			return 0, err
+			return err
 		}
 
 		b, err = v.br.Peek(len(sigPrefix[1:]) + 2)
@@ -113,7 +112,7 @@ func (v *volume) findSig() (ver int, err error) {
 			if err == io.EOF {
 				err = errNoSig
 			}
-			return 0, err
+			return err
 		}
 		if !bytes.HasPrefix(b, []byte(sigPrefix[1:])) {
 			continue
@@ -129,12 +128,16 @@ func (v *volume) findSig() (ver int, err error) {
 		default:
 			continue
 		}
-		b, _ = v.br.ReadSlice('\x00')
+		b, err = v.br.ReadSlice('\x00')
 		v.off += int64(len(b))
-
-		return ver, nil
+		if v.ver == 0 {
+			v.ver = ver
+		} else if v.ver != ver {
+			return errVerMismatch
+		}
+		return err
 	}
-	return 0, errNoSig
+	return errNoSig
 }
 
 // volume extends a fileBlockReader to be used across multiple
@@ -147,6 +150,7 @@ type volume struct {
 	num  int           // volume number
 	old  bool          // uses old naming scheme
 	off  int64         // current file offset
+	ver  int           // archive file format version
 }
 
 func (v *volume) clone() *volume {
@@ -364,12 +368,9 @@ func (v *volume) next() (*fileBlockHeader, error) {
 		}
 		v.num++
 		v.br.Reset(v.f)
-		ver, err := v.findSig()
+		err = v.findSig()
 		if err != nil {
 			return nil, err
-		}
-		if v.fbr.version() != ver {
-			return nil, errVerMismatch
 		}
 		v.fbr.reset() // reset encryption
 	}
@@ -404,11 +405,11 @@ func newFileBlockReader(v *volume, pass string) (fileBlockReader, error) {
 	if len(runes) > maxPassword {
 		pass = string(runes[:maxPassword])
 	}
-	ver, err := v.findSig()
+	err := v.findSig()
 	if err != nil {
 		return nil, err
 	}
-	switch ver {
+	switch v.ver {
 	case fileFmt15:
 		return newArchive15(pass), nil
 	case fileFmt50:

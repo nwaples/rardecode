@@ -426,8 +426,6 @@ func (a *archive15) next(v *volume) (*fileBlockHeader, error) {
 	}
 }
 
-func (a *archive15) version() int { return fileFmt15 }
-
 func (a *archive15) reset() {
 	a.encrypted = false // reset encryption when opening new volume file
 }

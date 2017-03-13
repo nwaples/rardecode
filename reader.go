@@ -211,7 +211,6 @@ type fileBlockHeader struct {
 type fileBlockReader interface {
 	next(v *volume) (*fileBlockHeader, error) // reads the next file block header at current position
 	reset()                                   // resets encryption and file offset
-	version() int                             // returns current archive format version
 	clone() fileBlockReader                   // makes a copy of the fileBlockReader
 }
 
