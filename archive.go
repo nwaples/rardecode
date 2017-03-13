@@ -30,7 +30,6 @@ var (
 	errBadHeaderCrc       = errors.New("rardecode: bad header crc")
 	errUnknownArc         = errors.New("rardecode: unknown archive version")
 	errUnknownDecoder     = errors.New("rardecode: unknown decoder version")
-	errUnsupportedDecoder = errors.New("rardecode: unsupported decoder version")
 	errArchiveContinues   = errors.New("rardecode: archive continues in next volume")
 	errArchiveEnd         = errors.New("rardecode: archive end reached")
 	errDecoderOutOfData   = errors.New("rardecode: decoder expected more data than is in packed file")

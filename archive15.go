@@ -49,7 +49,7 @@ const (
 )
 
 var (
-	errMultipleDecoders = errors.New("rardecode: multiple decoders in a single archive not supported")
+	errUnsupportedDecoder = errors.New("rardecode: unsupported decoder version")
 )
 
 type blockHeader15 struct {
