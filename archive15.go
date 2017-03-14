@@ -62,7 +62,7 @@ type blockHeader15 struct {
 
 // archive15 implements fileBlockReader for RAR 1.5 file format archives
 type archive15 struct {
-	limitedByteReader
+	blockReader
 	multi     bool // archive is multi-volume
 	solid     bool // archive is a solid archive
 	encrypted bool

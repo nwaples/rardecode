@@ -87,7 +87,7 @@ func newLittleEndianCRC32() hash.Hash32 {
 
 // archive50 implements fileBlockReader for RAR 5 file format archives
 type archive50 struct {
-	limitedByteReader
+	blockReader
 	pass     []byte
 	blockKey []byte                // key used to encrypt blocks
 	multi    bool                  // archive is multi-volume

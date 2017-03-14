@@ -77,18 +77,20 @@ type sliceReader interface {
 	peek(n int) ([]byte, error)      // return the next n bytes withough advancing reader
 }
 
-type limitedByteReader struct {
-	n int64
+// blockReader provides access to a block of data on a volume
+type blockReader struct {
+	n int64 // bytes left in current data block
 	v *volume
 }
 
-func (l *limitedByteReader) init() error { return l.v.init() }
+// init initializes a cloned volume
+func (l *blockReader) init() error { return l.v.init() }
 
-func (l *limitedByteReader) Close() error { return l.v.Close() }
+func (l *blockReader) Close() error { return l.v.Close() }
 
 // Read reads from v and stops with io.EOF after n bytes.
 // If v returns an io.EOF before reading n bytes, io.ErrUnexpectedEOF is returned.
-func (l *limitedByteReader) Read(p []byte) (int, error) {
+func (l *blockReader) Read(p []byte) (int, error) {
 	if l.n <= 0 {
 		return 0, io.EOF
 	}
@@ -103,7 +105,8 @@ func (l *limitedByteReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (l *limitedByteReader) skip() error {
+// skip to the end of the current data block
+func (l *blockReader) skip() error {
 	if l.n == 0 {
 		return nil
 	}
@@ -115,7 +118,7 @@ func (l *limitedByteReader) skip() error {
 // blocks returns a byte slice whose size is a multiple of blockSize.
 // If there is less than blockSize bytes available before EOF, then those
 // bytes will be returned.
-func (l *limitedByteReader) blocks(blockSize int) ([]byte, error) {
+func (l *blockReader) blocks(blockSize int) ([]byte, error) {
 	if l.n == 0 {
 		return nil, io.EOF
 	}
