@@ -16,9 +16,6 @@ const (
 	maxSfxSize = 0x100000 // maximum number of bytes to read when searching for RAR signature
 	sigPrefix  = "Rar!\x1A\x07"
 
-	fileFmt15 = iota + 1 // Version 1.5 archive file format
-	fileFmt50            // Version 5.0 archive file format
-
 	maxInt = int(^uint(0) >> 1)
 )
 
@@ -42,31 +39,20 @@ type volume struct {
 }
 
 func (v *volume) init() error {
-	if v.f == nil {
-		if len(v.name) == 0 {
-			return errArchiveNameEmpty
-		}
-		f, err := os.Open(v.name)
-		if err != nil {
-			return err
-		}
-		v.f = f
+	if len(v.name) == 0 {
+		return errArchiveNameEmpty
 	}
-	if v.br == nil {
-		br, ok := v.f.(*bufio.Reader)
-		if !ok {
-			br = bufio.NewReader(v.f)
-		}
-		v.br = br
-	}
-	if v.off > 0 {
-		err := v.discard(v.off)
-		if err != nil {
-			_ = v.Close()
-		}
+	f, err := os.Open(v.name)
+	if err != nil {
 		return err
 	}
-	return nil
+	v.f = f
+	v.br = bufio.NewReader(v.f)
+	err = v.discard(v.off)
+	if err != nil {
+		_ = v.Close()
+	}
+	return err
 }
 
 func (v *volume) clone() *volume {
@@ -179,18 +165,13 @@ func (v *volume) findSig() error {
 		}
 		b = b[len(sigPrefix)-1:]
 
-		var ver int
-		switch {
-		case b[0] == 0:
-			ver = fileFmt15
-		case b[0] == 1 && b[1] == 0:
-			ver = fileFmt50
-		default:
+		ver := int(b[0])
+		if b[0] != 0 && b[1] != 0 {
 			continue
 		}
 		b, err = v.br.ReadSlice('\x00')
 		v.off += int64(len(b))
-		if v.ver == 0 {
+		if v.num == 0 {
 			v.ver = ver
 		} else if v.ver != ver {
 			return errVerMismatch
@@ -306,12 +287,12 @@ func (v *volume) nextVolName() {
 }
 
 func (v *volume) next() error {
+	if len(v.name) == 0 {
+		return errFileNameRequired
+	}
 	err := v.Close()
 	if err != nil {
 		return err
-	}
-	if len(v.name) == 0 {
-		return errFileNameRequired
 	}
 	v.nextVolName()
 	v.num++
@@ -325,4 +306,27 @@ func (v *volume) next() error {
 		_ = v.Close()
 	}
 	return err
+}
+
+func newVolume(r io.Reader) (*volume, error) {
+	br, ok := r.(*bufio.Reader)
+	if !ok {
+		br = bufio.NewReader(r)
+	}
+	v := &volume{f: r, br: br}
+	return v, v.findSig()
+}
+
+func openVolume(name string) (*volume, error) {
+	f, err := os.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	v := &volume{f: f, name: name, br: bufio.NewReader(f)}
+	err = v.findSig()
+	if err != nil {
+		_ = v.Close()
+		return nil, err
+	}
+	return v, nil
 }

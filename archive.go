@@ -168,3 +168,34 @@ type fileBlockReader interface {
 	clone() fileBlockReader               // makes a copy of the fileBlockReader
 	init() error                          // initializes a cloned fileBlockReader
 }
+
+func newFileBlockReader(v *volume, pass string) (fileBlockReader, error) {
+	runes := []rune(pass)
+	if len(runes) > maxPassword {
+		pass = string(runes[:maxPassword])
+	}
+	switch v.ver {
+	case 0:
+		return newArchive15(v, pass), nil
+	case 1:
+		return newArchive50(v, pass), nil
+	default:
+		return nil, errUnknownArc
+	}
+}
+
+func newArchive(r io.Reader, pass string) (fileBlockReader, error) {
+	v, err := newVolume(r)
+	if err != nil {
+		return nil, err
+	}
+	return newFileBlockReader(v, pass)
+}
+
+func openArchive(name string, pass string) (fileBlockReader, error) {
+	v, err := openVolume(name)
+	if err != nil {
+		return nil, err
+	}
+	return newFileBlockReader(v, pass)
+}

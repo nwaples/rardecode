@@ -196,26 +196,18 @@ func (f *packedFileReader) blocks(blockSize int) ([]byte, error) {
 
 func (f *packedFileReader) bytes() ([]byte, error) { return f.blocks(1) }
 
-func newPackedFileReader(v *volume, pass string) (*packedFileReader, error) {
-	runes := []rune(pass)
-	if len(runes) > maxPassword {
-		pass = string(runes[:maxPassword])
-	}
-	if err := v.init(); err != nil {
+func newPackedFileReader(r io.Reader, pass string) (*packedFileReader, error) {
+	fbr, err := newArchive(r, pass)
+	if err != nil {
 		return nil, err
 	}
-	if err := v.findSig(); err != nil {
-		_ = v.Close()
+	return &packedFileReader{r: fbr}, nil
+}
+
+func openPackedFileReader(name string, pass string) (*packedFileReader, error) {
+	fbr, err := openArchive(name, pass)
+	if err != nil {
 		return nil, err
-	}
-	var fbr fileBlockReader
-	switch v.ver {
-	case fileFmt15:
-		fbr = newArchive15(v, pass)
-	case fileFmt50:
-		fbr = newArchive50(v, pass)
-	default:
-		return nil, errUnknownArc
 	}
 	return &packedFileReader{r: fbr}, nil
 }
@@ -409,7 +401,7 @@ func (r *Reader) nextFile() error {
 // NewReader only supports single volume archives.
 // Multi-volume archives must use OpenReader.
 func NewReader(r io.Reader, password string) (*Reader, error) {
-	pr, err := newPackedFileReader(&volume{f: r}, password)
+	pr, err := newPackedFileReader(r, password)
 	if err != nil {
 		return nil, err
 	}
@@ -428,7 +420,7 @@ func (rc *ReadCloser) Close() error {
 
 // OpenReader opens a RAR archive specified by the name and returns a ReadCloser.
 func OpenReader(name, password string) (*ReadCloser, error) {
-	pr, err := newPackedFileReader(&volume{name: name}, password)
+	pr, err := openPackedFileReader(name, password)
 	if err != nil {
 		return nil, err
 	}
