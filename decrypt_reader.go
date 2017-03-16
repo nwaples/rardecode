@@ -69,17 +69,35 @@ func newAesSliceReader(r sliceReader, key, iv []byte) *cipherBlockSliceReader {
 
 // cipherBlockReader implements Block Mode decryption of an io.Reader object.
 type cipherBlockReader struct {
-	r      *packedFileReader
+	r      byteReader
 	mode   cipher.BlockMode
 	inbuf  []byte // raw input blocks not yet decrypted
 	outbuf []byte // output buffer used when output slice < block size
+	block  []byte // output buffer for a single block
+}
+
+// readBlock returns a single decrypted block.
+func (cr *cipherBlockReader) readBlock() ([]byte, error) {
+	bs := len(cr.block)
+	if len(cr.inbuf) >= bs {
+		cr.mode.CryptBlocks(cr.block, cr.inbuf[:bs])
+		cr.inbuf = cr.inbuf[bs:]
+	} else {
+		n := copy(cr.block, cr.inbuf)
+		cr.inbuf = nil
+		_, err := io.ReadFull(cr.r, cr.block[n:])
+		if err != nil {
+			return nil, err
+		}
+		cr.mode.CryptBlocks(cr.block, cr.block)
+	}
+	return cr.block, nil
 }
 
 // Read reads and decrypts data into p.
 // If the input is not a multiple of the cipher block size,
 // the trailing bytes will be ignored.
 func (cr *cipherBlockReader) Read(p []byte) (int, error) {
-	bs := cr.mode.BlockSize()
 	if len(cr.outbuf) > 0 {
 		n := copy(p, cr.outbuf)
 		cr.outbuf = cr.outbuf[n:]
@@ -88,27 +106,32 @@ func (cr *cipherBlockReader) Read(p []byte) (int, error) {
 	// get input blocks
 	for len(cr.inbuf) == 0 {
 		var err error
-		cr.inbuf, err = cr.r.blocks(bs)
+		cr.inbuf, err = cr.r.bytes()
 		if err != nil {
 			return 0, err
 		}
 	}
-	if len(p) < bs {
-		// output slice is smaller than block size, so decrypt one
-		// block and save the remaining bytes in outbuf.
-		cr.outbuf = cr.inbuf[:bs]
-		cr.inbuf = cr.inbuf[bs:]
-		cr.mode.CryptBlocks(cr.outbuf, cr.outbuf)
-		n := copy(p, cr.outbuf)
-		cr.outbuf = cr.outbuf[n:]
+	bs := cr.mode.BlockSize()
+	n := len(cr.inbuf)
+	l := len(p)
+	if n < bs || l < bs {
+		// Next encrypted block spans volumes or Read buffer is too small
+		// to fit a single block. Decrypt a single block and store the
+		// leftover in outbuf.
+		b, err := cr.readBlock()
+		if err != nil {
+			return 0, err
+		}
+		n = copy(p, b)
+		cr.outbuf = b[n:]
 		return n, nil
 	}
-	// round p down to a multiple of block size
-	n := len(p)
-	n = n - n%bs
-	if nn := len(cr.inbuf); nn < n {
-		n = nn
+	if l < n {
+		// output buffer smaller than input
+		n = l
 	}
+	// round down to block size
+	n -= n % bs
 	cr.mode.CryptBlocks(p[:n], cr.inbuf[:n])
 	cr.inbuf = cr.inbuf[n:]
 	return n, nil
@@ -121,27 +144,42 @@ func (cr *cipherBlockReader) bytes() ([]byte, error) {
 		cr.outbuf = nil
 		return b, nil
 	}
-	b := cr.inbuf
-	cr.inbuf = nil
-	for len(b) == 0 {
+	// get more input
+	for len(cr.inbuf) == 0 {
 		var err error
-		b, err = cr.r.blocks(cr.mode.BlockSize())
+		cr.inbuf, err = cr.r.bytes()
 		if err != nil {
 			return nil, err
 		}
 	}
+	bs := cr.mode.BlockSize()
+	if len(cr.inbuf) < bs {
+		// next encrypted block spans volumes
+		return cr.readBlock()
+	}
+	n := len(cr.inbuf)
+	n -= n % bs
+	// get input buffer and round down to nearest block boundary
+	b := cr.inbuf[:n]
+	cr.inbuf = cr.inbuf[n:]
 	cr.mode.CryptBlocks(b, b)
 	return b, nil
 }
 
+func newCipherBlockReader(r byteReader, mode cipher.BlockMode) *cipherBlockReader {
+	c := &cipherBlockReader{r: r, mode: mode}
+	c.block = make([]byte, mode.BlockSize())
+	return c
+}
+
 // newAesDecryptReader returns a cipherBlockReader that decrypts input from a given io.Reader using AES.
 // It will panic if the provided key is invalid.
-func newAesDecryptReader(r *packedFileReader, key, iv []byte) *cipherBlockReader {
+func newAesDecryptReader(r byteReader, key, iv []byte) *cipherBlockReader {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		panic(err)
 	}
 	mode := cipher.NewCBCDecrypter(block, iv)
 
-	return &cipherBlockReader{r: r, mode: mode}
+	return newCipherBlockReader(r, mode)
 }
