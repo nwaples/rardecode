@@ -161,40 +161,16 @@ func (f *packedFileReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// blocks returns a byte slice whose size is always a multiple of blockSize.
-func (f *packedFileReader) blocks(blockSize int) ([]byte, error) {
-	b, err := f.r.blocks(blockSize)
+func (f *packedFileReader) bytes() ([]byte, error) {
+	b, err := f.r.bytes()
 	for err == io.EOF {
 		if err = f.nextBlock(); err != nil {
 			return nil, err
 		}
-		b, err = f.r.blocks(blockSize) // read new block data
+		b, err = f.r.bytes()
 	}
-	if len(b) >= blockSize || err != nil {
-		return b, err
-	}
-
-	// slice returned is smaller than blockSize. Try to get the rest
-	// from the following file blocks.
-	buf := make([]byte, blockSize)
-	n := copy(buf, b)
-	err = f.nextBlock()
-	for err == nil {
-		var nn int
-		// read a single small block of the remaining bytes
-		nn, err = io.ReadFull(f.r, buf[n:])
-		switch err {
-		case nil:
-			return buf, nil
-		case io.EOF, io.ErrUnexpectedEOF:
-			err = f.nextBlock()
-		}
-		n += nn
-	}
-	return nil, err
+	return b, err
 }
-
-func (f *packedFileReader) bytes() ([]byte, error) { return f.blocks(1) }
 
 func newPackedFileReader(r io.Reader, pass string) (*packedFileReader, error) {
 	fbr, err := newArchive(r, pass)

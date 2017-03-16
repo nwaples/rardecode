@@ -115,27 +115,26 @@ func (l *blockReader) skip() error {
 	return l.v.discard(n)
 }
 
-// blocks returns a byte slice whose size is a multiple of blockSize.
-// If there is less than blockSize bytes available before EOF, then those
-// bytes will be returned.
-func (l *blockReader) blocks(blockSize int) ([]byte, error) {
+// bytes returns a byte slice from the current volume.
+// bytes will only return up to l.n bytes before returning io.EOF.
+func (l *blockReader) bytes() ([]byte, error) {
 	if l.n == 0 {
 		return nil, io.EOF
 	}
-	var n int
-	if l.n < int64(blockSize) {
+	n := maxInt
+	if l.n < int64(n) {
 		n = int(l.n)
-	} else {
-		n = maxInt
-		if l.n < int64(n) {
-			n = int(l.n)
+	}
+	if k := l.v.br.Buffered(); k > 0 {
+		if k < n {
+			n = k
 		}
+	} else {
 		b, err := l.v.peek(n)
 		if err != nil && err != bufio.ErrBufferFull {
 			return nil, err
 		}
 		n = len(b)
-		n -= n % blockSize
 	}
 	b, err := l.v.readSlice(n)
 	l.n -= int64(len(b))
@@ -161,12 +160,12 @@ type fileBlockHeader struct {
 
 // fileBlockReader provides sequential access to file blocks in a RAR archive.
 type fileBlockReader interface {
-	io.Reader                             // provides read access to current file block data
-	io.Closer                             // closes volume file opened by fileBlockReader
-	blocks(blockSize int) ([]byte, error) // returns a byte slice in multiples of blockSize from current block
-	next() (*fileBlockHeader, error)      // advances to the next file block
-	clone() fileBlockReader               // makes a copy of the fileBlockReader
-	init() error                          // initializes a cloned fileBlockReader
+	io.Reader                        // provides read access to current file block data
+	io.Closer                        // closes volume file opened by fileBlockReader
+	bytes() ([]byte, error)          // returns a byte slice from the current block
+	next() (*fileBlockHeader, error) // advances to the next file block
+	clone() fileBlockReader          // makes a copy of the fileBlockReader
+	init() error                     // initializes a cloned fileBlockReader
 }
 
 func newFileBlockReader(v *volume, pass string) (fileBlockReader, error) {
