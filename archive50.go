@@ -87,7 +87,6 @@ func newLittleEndianCRC32() hash.Hash32 {
 
 // archive50 implements fileBlockReader for RAR 5 file format archives
 type archive50 struct {
-	blockReader
 	pass     []byte
 	blockKey []byte                // key used to encrypt blocks
 	multi    bool                  // archive is multi-volume
@@ -102,7 +101,6 @@ type archive50 struct {
 func (a *archive50) clone() fileBlockReader {
 	na := new(archive50)
 	*na = *a
-	na.v = na.v.clone()
 	return na
 }
 
@@ -330,8 +328,7 @@ func (a *archive50) parseEncryptionBlock(b readBuf) error {
 	return nil
 }
 
-func (a *archive50) readBlockHeader() (*blockHeader50, error) {
-	r := sliceReader(a.v)
+func (a *archive50) readBlockHeader(r sliceReader) (*blockHeader50, error) {
 	if a.blockKey != nil {
 		// block is encrypted
 		iv, err := r.readSlice(16)
@@ -395,23 +392,16 @@ func (a *archive50) readBlockHeader() (*blockHeader50, error) {
 }
 
 // next advances to the next file block in the archive
-func (a *archive50) next() (*fileBlockHeader, error) {
+func (a *archive50) next(v *volume) (*fileBlockHeader, error) {
 	for {
-		// skip current data
-		if err := a.skip(); err != nil {
-			return nil, err
-		}
 		// get next block header
-		h, err := a.readBlockHeader()
+		h, err := a.readBlockHeader(v)
 		if err != nil {
 			if err == io.EOF {
 				err = io.ErrUnexpectedEOF
 			}
 			return nil, err
 		}
-		// set data block size
-		a.n = h.dataSize
-
 		switch h.htype {
 		case block5File:
 			return a.parseFileHeader(h)
@@ -427,7 +417,11 @@ func (a *archive50) next() (*fileBlockHeader, error) {
 				return nil, io.EOF
 			}
 			a.blockKey = nil // reset encryption when opening new volume file
-			err = a.v.next()
+			err = v.next()
+		default:
+			if h.dataSize > 0 {
+				err = v.discard(h.dataSize) // skip over block data
+			}
 		}
 		if err != nil {
 			return nil, err
@@ -436,9 +430,8 @@ func (a *archive50) next() (*fileBlockHeader, error) {
 }
 
 // newArchive50 creates a new fileBlockReader for a Version 5 archive.
-func newArchive50(v *volume, password string) fileBlockReader {
+func newArchive50(password string) *archive50 {
 	a := new(archive50)
 	a.pass = []byte(password)
-	a.v = v
 	return a
 }

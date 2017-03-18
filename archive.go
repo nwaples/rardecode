@@ -81,10 +81,18 @@ type sliceReader interface {
 type blockReader struct {
 	n int64 // bytes left in current data block
 	v *volume
+	r fileBlockReader
 }
 
 // init initializes a cloned volume
 func (l *blockReader) init() error { return l.v.init() }
+
+func (l *blockReader) clone() *blockReader {
+	nr := &blockReader{n: l.n}
+	nr.r = l.r.clone()
+	nr.v = l.v.clone()
+	return nr
+}
 
 func (l *blockReader) Close() error { return l.v.Close() }
 
@@ -105,14 +113,24 @@ func (l *blockReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// skip to the end of the current data block
-func (l *blockReader) skip() error {
-	if l.n == 0 {
-		return nil
+// next advances to the next file block in the archive.
+func (l *blockReader) next() (*fileBlockHeader, error) {
+	if l.r == nil {
+		return nil, io.EOF
 	}
-	n := l.n
-	l.n = 0
-	return l.v.discard(n)
+	if l.n > 0 {
+		// discard current block data
+		if err := l.v.discard(l.n); err != nil {
+			return nil, err
+		}
+		l.n = 0
+	}
+	// get next file block
+	h, err := l.r.next(l.v)
+	if h != nil {
+		l.n = h.PackedSize
+	}
+	return h, err
 }
 
 // bytes returns a byte slice from the current volume.
@@ -158,32 +176,30 @@ type fileBlockHeader struct {
 	FileHeader
 }
 
-// fileBlockReader provides sequential access to file blocks in a RAR archive.
+// fileBlockReader returns the next fileBlockHeader in a volume.
 type fileBlockReader interface {
-	io.Reader                        // provides read access to current file block data
-	io.Closer                        // closes volume file opened by fileBlockReader
-	bytes() ([]byte, error)          // returns a byte slice from the current block
-	next() (*fileBlockHeader, error) // advances to the next file block
-	clone() fileBlockReader          // makes a copy of the fileBlockReader
-	init() error                     // initializes a cloned fileBlockReader
+	next(v *volume) (*fileBlockHeader, error) // reads the volume and returns the next fileBlockHeader
+	clone() fileBlockReader                   // makes a copy of the fileBlockReader
 }
 
-func newFileBlockReader(v *volume, pass string) (fileBlockReader, error) {
+func newFileBlockReader(v *volume, pass string) (*blockReader, error) {
 	runes := []rune(pass)
 	if len(runes) > maxPassword {
 		pass = string(runes[:maxPassword])
 	}
+	b := &blockReader{v: v}
 	switch v.ver {
 	case 0:
-		return newArchive15(v, pass), nil
+		b.r = newArchive15(pass)
 	case 1:
-		return newArchive50(v, pass), nil
+		b.r = newArchive50(pass)
 	default:
 		return nil, errUnknownArc
 	}
+	return b, nil
 }
 
-func newArchive(r io.Reader, pass string) (fileBlockReader, error) {
+func newArchive(r io.Reader, pass string) (*blockReader, error) {
 	v, err := newVolume(r)
 	if err != nil {
 		return nil, err
@@ -191,7 +207,7 @@ func newArchive(r io.Reader, pass string) (fileBlockReader, error) {
 	return newFileBlockReader(v, pass)
 }
 
-func openArchive(name string, pass string) (fileBlockReader, error) {
+func openArchive(name string, pass string) (*blockReader, error) {
 	v, err := openVolume(name)
 	if err != nil {
 		return nil, err

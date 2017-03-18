@@ -101,7 +101,7 @@ type byteReader interface {
 // packedFileReader provides sequential access to packed files in a RAR archive.
 type packedFileReader struct {
 	h *fileBlockHeader // current file header
-	r fileBlockReader
+	r *blockReader
 }
 
 // nextBlock reads the next file block in the current file at the current
@@ -407,7 +407,7 @@ func OpenReader(name, password string) (*ReadCloser, error) {
 type File struct {
 	FileHeader
 	h *fileBlockHeader
-	r fileBlockReader
+	r *blockReader
 }
 
 // Open returns an io.ReadCloser that provides access to the File's contents.
