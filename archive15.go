@@ -129,7 +129,7 @@ func parseDosTime(t uint32) time.Time {
 	day := n >> 16 & 0x1f
 	mon := time.Month(n >> 21 & 0x0f)
 	yr := n>>25&0x7f + 1980
-	return time.Date(yr, mon, day, hr, min, sec, 0, time.Local)
+	return time.Date(yr, mon, day, hr, min, sec, 0, time.UTC)
 }
 
 // decodeName decodes a non-unicode filename from a file header.
