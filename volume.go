@@ -294,12 +294,14 @@ func (v *volume) next() error {
 	if err != nil {
 		return err
 	}
+	v.f = nil
 	v.nextVolName()
 	v.num++
-	v.f, err = os.Open(v.name) // Open next volume file
+	f, err := os.Open(v.name) // Open next volume file
 	if err != nil {
 		return err
 	}
+	v.f = f
 	v.br.Reset(v.f)
 	err = v.findSig()
 	if err != nil {
