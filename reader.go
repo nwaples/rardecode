@@ -1,6 +1,7 @@
 package rardecode
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -100,18 +101,42 @@ type byteReader interface {
 
 // packedFileReader provides sequential access to packed files in a RAR archive.
 type packedFileReader struct {
+	n int64 // bytes left in current data block
+	v *volume
+	r fileBlockReader
 	h *fileBlockHeader // current file header
-	r *blockReader
 }
+
+// init initializes a cloned packedFileReader
+func (f *packedFileReader) init() error { return f.v.init() }
+
+func (f *packedFileReader) clone() *packedFileReader {
+	nr := &packedFileReader{n: f.n, h: f.h}
+	nr.r = f.r.clone()
+	nr.v = f.v.clone()
+	return nr
+}
+
+func (f *packedFileReader) Close() error { return f.v.Close() }
 
 // nextBlock reads the next file block in the current file at the current
 // archive file position, or returns an error if there is a problem.
 // It is invalid to call this when already at the last block in the current file.
 func (f *packedFileReader) nextBlock() error {
-	if f.h == nil || f.h.last {
+	if f.h == nil {
 		return io.EOF
 	}
-	h, err := f.r.next()
+	// discard current block data
+	if f.n > 0 {
+		if err := f.v.discard(f.n); err != nil {
+			return err
+		}
+		f.n = 0
+	}
+	if f.h.last {
+		return io.EOF
+	}
+	h, err := f.r.next(f.v)
 	if err != nil {
 		if err == io.EOF {
 			// archive ended, but file hasn't
@@ -122,6 +147,7 @@ func (f *packedFileReader) nextBlock() error {
 	if h.first || h.Name != f.h.Name {
 		return errInvalidFileBlock
 	}
+	f.n = h.PackedSize
 	f.h = h
 	return nil
 }
@@ -136,56 +162,86 @@ func (f *packedFileReader) next() (*fileBlockHeader, error) {
 	if err != io.EOF {
 		return nil, err
 	}
-	f.h, err = f.r.next() // get next file block
+	f.h, err = f.r.next(f.v) // get next file block
 	if err != nil {
 		return nil, err
 	}
 	if !f.h.first {
 		return nil, errInvalidFileBlock
 	}
+	f.n = f.h.PackedSize
 	return f.h, nil
 }
 
 // Read reads the packed data for the current file into p.
 func (f *packedFileReader) Read(p []byte) (int, error) {
-	n, err := f.r.Read(p) // read current block data
-	for err == io.EOF {   // current block empty
-		if n > 0 {
-			return n, nil
-		}
-		if err = f.nextBlock(); err != nil {
+	for f.n == 0 {
+		if err := f.nextBlock(); err != nil {
 			return 0, err
 		}
-		n, err = f.r.Read(p) // read new block data
+	}
+	if int64(len(p)) > f.n {
+		p = p[0:f.n]
+	}
+	n, err := f.v.Read(p)
+	f.n -= int64(n)
+	if err == io.EOF && f.n > 0 {
+		return n, io.ErrUnexpectedEOF
+	}
+	if n > 0 {
+		return n, nil
 	}
 	return n, err
 }
 
 func (f *packedFileReader) bytes() ([]byte, error) {
-	b, err := f.r.bytes()
-	for err == io.EOF {
-		if err = f.nextBlock(); err != nil {
+	for f.n == 0 {
+		if err := f.nextBlock(); err != nil {
 			return nil, err
 		}
-		b, err = f.r.bytes()
 	}
+	n := maxInt
+	if f.n < int64(n) {
+		n = int(f.n)
+	}
+	if k := f.v.br.Buffered(); k > 0 {
+		if k < n {
+			n = k
+		}
+	} else {
+		b, err := f.v.peek(n)
+		if err != nil && err != bufio.ErrBufferFull {
+			return nil, err
+		}
+		n = len(b)
+	}
+	b, err := f.v.readSlice(n)
+	f.n -= int64(len(b))
 	return b, err
 }
 
 func newPackedFileReader(r io.Reader, pass string) (*packedFileReader, error) {
-	fbr, err := newArchive(r, pass)
+	v, err := newVolume(r)
 	if err != nil {
 		return nil, err
 	}
-	return &packedFileReader{r: fbr}, nil
+	fbr, err := newFileBlockReader(v, pass)
+	if err != nil {
+		return nil, err
+	}
+	return &packedFileReader{r: fbr, v: v}, nil
 }
 
 func openPackedFileReader(name string, pass string) (*packedFileReader, error) {
-	fbr, err := openArchive(name, pass)
+	v, err := openVolume(name)
 	if err != nil {
 		return nil, err
 	}
-	return &packedFileReader{r: fbr}, nil
+	fbr, err := newFileBlockReader(v, pass)
+	if err != nil {
+		return nil, err
+	}
+	return &packedFileReader{r: fbr, v: v}, nil
 }
 
 type limitedReader struct {
@@ -391,7 +447,7 @@ type ReadCloser struct {
 
 // Close closes the rar file.
 func (rc *ReadCloser) Close() error {
-	return rc.pr.r.Close()
+	return rc.pr.Close()
 }
 
 // OpenReader opens a RAR archive specified by the name and returns a ReadCloser.
@@ -406,8 +462,7 @@ func OpenReader(name, password string) (*ReadCloser, error) {
 // File represents a file in a RAR archive
 type File struct {
 	FileHeader
-	h *fileBlockHeader
-	r *blockReader
+	pr *packedFileReader
 }
 
 // Open returns an io.ReadCloser that provides access to the File's contents.
@@ -418,12 +473,12 @@ func (f *File) Open() (io.ReadCloser, error) {
 	if f.Solid {
 		return nil, errSolidOpen
 	}
-	err := f.r.init()
+	err := f.pr.init()
 	if err != nil {
 		return nil, err
 	}
 	r := new(ReadCloser)
-	r.pr = &packedFileReader{r: f.r, h: f.h}
+	r.pr = f.pr
 	return r, nil
 }
 
@@ -434,7 +489,7 @@ func List(name, password string) ([]*File, error) {
 		return nil, err
 	}
 	pr := r.pr
-	defer pr.r.Close()
+	defer pr.Close()
 
 	var fl []*File
 	for {
@@ -450,8 +505,7 @@ func List(name, password string) ([]*File, error) {
 		// save information for File
 		f := new(File)
 		f.FileHeader = h.FileHeader
-		f.h = h
-		f.r = pr.r.clone()
+		f.pr = pr.clone()
 		fl = append(fl, f)
 	}
 }
