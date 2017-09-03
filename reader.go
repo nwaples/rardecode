@@ -8,6 +8,7 @@ import (
 	"errors"
 	"hash"
 	"io"
+	"net/http"
 	"os"
 	"time"
 )
@@ -232,8 +233,8 @@ func newPackedFileReader(r io.Reader, pass string) (*packedFileReader, error) {
 	return &packedFileReader{r: fbr, v: v}, nil
 }
 
-func openPackedFileReader(name string, pass string) (*packedFileReader, error) {
-	v, err := openVolume(name)
+func openPackedFileReader(fs http.FileSystem, name string, pass string) (*packedFileReader, error) {
+	v, err := openVolume(fs, name)
 	if err != nil {
 		return nil, err
 	}
@@ -451,8 +452,8 @@ func (rc *ReadCloser) Close() error {
 }
 
 // OpenReader opens a RAR archive specified by the name and returns a ReadCloser.
-func OpenReader(name, password string) (*ReadCloser, error) {
-	pr, err := openPackedFileReader(name, password)
+func OpenReader(fs http.FileSystem, name, password string) (*ReadCloser, error) {
+	pr, err := openPackedFileReader(fs, name, password)
 	if err != nil {
 		return nil, err
 	}
@@ -483,8 +484,8 @@ func (f *File) Open() (io.ReadCloser, error) {
 }
 
 // List returns a list of File's in the RAR archive specified by name.
-func List(name, password string) ([]*File, error) {
-	r, err := OpenReader(name, password)
+func List(fs http.FileSystem, name, password string) ([]*File, error) {
+	r, err := OpenReader(fs, name, password)
 	if err != nil {
 		return nil, err
 	}

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
+	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -29,20 +29,21 @@ var (
 // volume extends a fileBlockReader to be used across multiple
 // files in a multi-volume archive
 type volume struct {
-	f    io.Reader     // current file handle
-	br   *bufio.Reader // buffered reader for current volume file
-	name string        // current volume file name
-	num  int           // volume number
-	old  bool          // uses old naming scheme
-	off  int64         // current file offset
-	ver  int           // archive file format version
+	fs   http.FileSystem // file system for accessing the next file
+	f    io.Reader       // current file handle
+	br   *bufio.Reader   // buffered reader for current volume file
+	name string          // current volume file name
+	num  int             // volume number
+	old  bool            // uses old naming scheme
+	off  int64           // current file offset
+	ver  int             // archive file format version
 }
 
 func (v *volume) init() error {
 	if len(v.name) == 0 {
 		return errArchiveNameEmpty
 	}
-	f, err := os.Open(v.name)
+	f, err := v.fs.Open(v.name)
 	if err != nil {
 		return err
 	}
@@ -297,7 +298,7 @@ func (v *volume) next() error {
 	v.f = nil
 	v.nextVolName()
 	v.num++
-	f, err := os.Open(v.name) // Open next volume file
+	f, err := v.fs.Open(v.name) // Open next volume file
 	if err != nil {
 		return err
 	}
@@ -319,12 +320,12 @@ func newVolume(r io.Reader) (*volume, error) {
 	return v, v.findSig()
 }
 
-func openVolume(name string) (*volume, error) {
-	f, err := os.Open(name)
+func openVolume(fs http.FileSystem, name string) (*volume, error) {
+	f, err := fs.Open(name)
 	if err != nil {
 		return nil, err
 	}
-	v := &volume{f: f, name: name, br: bufio.NewReader(f)}
+	v := &volume{fs: fs, f: f, name: name, br: bufio.NewReader(f)}
 	err = v.findSig()
 	if err != nil {
 		_ = v.Close()
