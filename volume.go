@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,6 +27,30 @@ var (
 	errFileNameRequired = errors.New("rardecode: filename required for multi volume archive")
 )
 
+type option struct {
+	bsize int             // size to be use for bufio.Reader
+	fs    http.FileSystem // filesystem to use to open files
+	pass  string          // password for encrypted volumes
+}
+
+// An Option is used for optional archive extraction settings.
+type Option func(*option)
+
+// BufferSize sets the size of the bufio.Reader used in reading the archive.
+func BufferSize(size int) Option {
+	return func(o *option) { o.bsize = size }
+}
+
+// HTTPFileSystem sets the http.FileSystem to be used for opening archive volumes.
+func HTTPFileSystem(fs http.FileSystem) Option {
+	return func(o *option) { o.fs = fs }
+}
+
+// Password sets the password to use for decrypting archives.
+func Password(pass string) Option {
+	return func(o *option) { o.pass = pass }
+}
+
 // volume extends a fileBlockReader to be used across multiple
 // files in a multi-volume archive
 type volume struct {
@@ -36,18 +61,52 @@ type volume struct {
 	old  bool          // uses old naming scheme
 	off  int64         // current file offset
 	ver  int           // archive file format version
+	opt  option        // optional settings
 }
 
-func (v *volume) init() error {
+func (v *volume) setOpts(opts []Option) {
+	for _, f := range opts {
+		f(&v.opt)
+	}
+}
+
+func (v *volume) setBuffer() {
+	if v.br != nil {
+		v.br.Reset(v.f)
+	} else if size := v.opt.bsize; size > 0 {
+		v.br = bufio.NewReaderSize(v.f, size)
+	} else if br, ok := v.f.(*bufio.Reader); ok {
+		v.br = br
+	} else {
+		v.br = bufio.NewReader(v.f)
+	}
+}
+
+func (v *volume) openFile() error {
+	var err error
+	var f io.Reader
+
 	if len(v.name) == 0 {
 		return errArchiveNameEmpty
 	}
-	f, err := os.Open(v.name)
+	if fs := v.opt.fs; fs != nil {
+		f, err = fs.Open(v.name)
+	} else {
+		f, err = os.Open(v.name)
+	}
 	if err != nil {
 		return err
 	}
 	v.f = f
-	v.br = bufio.NewReader(v.f)
+	v.setBuffer()
+	return nil
+}
+
+func (v *volume) init() error {
+	err := v.openFile()
+	if err != nil {
+		return err
+	}
 	err = v.discard(v.off)
 	if err != nil {
 		_ = v.Close()
@@ -297,12 +356,10 @@ func (v *volume) next() error {
 	v.f = nil
 	v.nextVolName()
 	v.num++
-	f, err := os.Open(v.name) // Open next volume file
+	err = v.openFile() // Open next volume file
 	if err != nil {
 		return err
 	}
-	v.f = f
-	v.br.Reset(v.f)
 	err = v.findSig()
 	if err != nil {
 		_ = v.Close()
@@ -310,21 +367,20 @@ func (v *volume) next() error {
 	return err
 }
 
-func newVolume(r io.Reader) (*volume, error) {
-	br, ok := r.(*bufio.Reader)
-	if !ok {
-		br = bufio.NewReader(r)
-	}
-	v := &volume{f: r, br: br}
+func newVolume(r io.Reader, opts []Option) (*volume, error) {
+	v := &volume{f: r}
+	v.setOpts(opts)
+	v.setBuffer()
 	return v, v.findSig()
 }
 
-func openVolume(name string) (*volume, error) {
-	f, err := os.Open(name)
+func openVolume(name string, opts []Option) (*volume, error) {
+	v := &volume{name: name}
+	v.setOpts(opts)
+	err := v.openFile()
 	if err != nil {
 		return nil, err
 	}
-	v := &volume{f: f, name: name, br: bufio.NewReader(f)}
 	err = v.findSig()
 	if err != nil {
 		_ = v.Close()

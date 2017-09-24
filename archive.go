@@ -98,7 +98,8 @@ type fileBlockReader interface {
 	clone() fileBlockReader                   // makes a copy of the fileBlockReader
 }
 
-func newFileBlockReader(v *volume, pass string) (fileBlockReader, error) {
+func newFileBlockReader(v *volume) (fileBlockReader, error) {
+	pass := v.opt.pass
 	runes := []rune(pass)
 	if len(runes) > maxPassword {
 		pass = string(runes[:maxPassword])

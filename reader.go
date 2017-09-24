@@ -220,24 +220,24 @@ func (f *packedFileReader) bytes() ([]byte, error) {
 	return b, err
 }
 
-func newPackedFileReader(r io.Reader, pass string) (*packedFileReader, error) {
-	v, err := newVolume(r)
+func newPackedFileReader(r io.Reader, opts []Option) (*packedFileReader, error) {
+	v, err := newVolume(r, opts)
 	if err != nil {
 		return nil, err
 	}
-	fbr, err := newFileBlockReader(v, pass)
+	fbr, err := newFileBlockReader(v)
 	if err != nil {
 		return nil, err
 	}
 	return &packedFileReader{r: fbr, v: v}, nil
 }
 
-func openPackedFileReader(name string, pass string) (*packedFileReader, error) {
-	v, err := openVolume(name)
+func openPackedFileReader(name string, opts []Option) (*packedFileReader, error) {
+	v, err := openVolume(name, opts)
 	if err != nil {
 		return nil, err
 	}
-	fbr, err := newFileBlockReader(v, pass)
+	fbr, err := newFileBlockReader(v)
 	if err != nil {
 		return nil, err
 	}
@@ -432,8 +432,8 @@ func (r *Reader) nextFile() error {
 // NewReader creates a Reader reading from r.
 // NewReader only supports single volume archives.
 // Multi-volume archives must use OpenReader.
-func NewReader(r io.Reader, password string) (*Reader, error) {
-	pr, err := newPackedFileReader(r, password)
+func NewReader(r io.Reader, opts ...Option) (*Reader, error) {
+	pr, err := newPackedFileReader(r, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -451,8 +451,8 @@ func (rc *ReadCloser) Close() error {
 }
 
 // OpenReader opens a RAR archive specified by the name and returns a ReadCloser.
-func OpenReader(name, password string) (*ReadCloser, error) {
-	pr, err := openPackedFileReader(name, password)
+func OpenReader(name string, opts ...Option) (*ReadCloser, error) {
+	pr, err := openPackedFileReader(name, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -483,8 +483,8 @@ func (f *File) Open() (io.ReadCloser, error) {
 }
 
 // List returns a list of File's in the RAR archive specified by name.
-func List(name, password string) ([]*File, error) {
-	r, err := OpenReader(name, password)
+func List(name string, opts ...Option) ([]*File, error) {
+	r, err := OpenReader(name, opts...)
 	if err != nil {
 		return nil, err
 	}
