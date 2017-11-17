@@ -7,6 +7,7 @@ import (
 
 const (
 	_ = iota
+	decode20Ver
 	decode29Ver
 	decode50Ver
 )

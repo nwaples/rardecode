@@ -413,7 +413,7 @@ func (r *Reader) nextFile() error {
 		if r.dr == nil {
 			r.dr = new(decodeReader)
 		}
-		err := r.dr.init(r.r, h.decVer, h.winSize, !h.Solid, h.arcSolid)
+		err := r.dr.init(r.r, h.decVer, h.winSize, !h.Solid, h.UnPackedSize)
 		if err != nil {
 			return err
 		}

@@ -26,9 +26,9 @@ type filterBlock struct {
 
 // decoder is the interface for decoding compressed data
 type decoder interface {
-	init(r byteReader, reset bool) // initialize decoder for current file
-	fill(dr *decodeReader) error   // fill window with decoded data
-	version() int                  // decoder version
+	init(r byteReader, reset bool, size int64) // initialize decoder for current file
+	fill(dr *decodeReader) error               // fill window with decoded data
+	version() int                              // decoder version
 }
 
 // decodeReader implements io.Reader for decoding compressed data in RAR archives.
@@ -39,7 +39,6 @@ type decodeReader struct {
 	fl     []*filterBlock // list of filters each with offset relative to previous in list
 	dec    decoder        // decoder being used to unpack file
 	err    error          // current decoder error output
-	solid  bool           // archive is solid
 	br     byteReader
 
 	win  []byte // sliding window buffer
@@ -51,7 +50,7 @@ type decodeReader struct {
 	o    int    // offset of bytes to be processed by copyBytes
 }
 
-func (d *decodeReader) init(r byteReader, ver int, winsize uint, reset, solid bool) error {
+func (d *decodeReader) init(r byteReader, ver int, winsize uint, reset bool, unPackedSize int64) error {
 	d.outbuf = nil
 	d.tot = 0
 	d.err = nil
@@ -59,7 +58,6 @@ func (d *decodeReader) init(r byteReader, ver int, winsize uint, reset, solid bo
 		d.fl = nil
 	}
 	d.br = r
-	d.solid = solid
 
 	// initialize window
 	size := 1 << winsize
@@ -93,13 +91,15 @@ func (d *decodeReader) init(r byteReader, ver int, winsize uint, reset, solid bo
 			d.dec = new(decoder29)
 		case decode50Ver:
 			d.dec = new(decoder50)
+		case decode20Ver:
+			d.dec = new(decoder20)
 		default:
 			return errUnknownDecoder
 		}
 	} else if d.dec.version() != ver {
 		return errMultipleDecoders
 	}
-	d.dec.init(r, reset)
+	d.dec.init(r, reset, unPackedSize)
 	return nil
 }
 

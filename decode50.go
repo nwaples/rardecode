@@ -39,7 +39,7 @@ type decoder50 struct {
 
 func (d *decoder50) version() int { return decode50Ver }
 
-func (d *decoder50) init(r byteReader, reset bool) {
+func (d *decoder50) init(r byteReader, reset bool, size int64) {
 	d.br.reset(r)
 	d.lastBlock = false
 

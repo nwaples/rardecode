@@ -327,8 +327,10 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 	f.hash = newLittleEndianCRC32()
 	if method != 0 {
 		switch unpackver {
-		case 15, 20, 26:
+		case 15:
 			return nil, errUnsupportedDecoder
+		case 20, 26:
+			f.decVer = decode20Ver
 		case 29:
 			f.decVer = decode29Ver
 		default:
