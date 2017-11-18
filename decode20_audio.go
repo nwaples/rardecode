@@ -1,12 +1,12 @@
 package rardecode
 
 type audioVar struct {
-	K1, K2, K3, K4, K5 int
-	D1, D2, D3, D4     int
-	lastDelta          int
-	dif                [11]int
-	byteCount          int
-	lastChar           int
+	k         [5]int
+	d         [4]int
+	lastDelta int
+	dif       [11]int
+	byteCount int
+	lastChar  int
 }
 
 type audio20Decoder struct {
@@ -54,83 +54,54 @@ func (d *audio20Decoder) init(br *rarBitReader, table []byte) error {
 func (d *audio20Decoder) decode(delta int) byte {
 	v := &d.vars[d.curChan]
 	v.byteCount++
-	v.D4 = v.D3
-	v.D3 = v.D2
-	v.D2 = v.lastDelta - v.D1
-	v.D1 = v.lastDelta
-	pch := 8*v.lastChar + v.K1*v.D1 + v.K2*v.D2 + v.K3*v.D3 + v.K4*v.D4 + v.K5*d.chanDelta
+	v.d[3] = v.d[2]
+	v.d[2] = v.d[1]
+	v.d[1] = v.lastDelta - v.d[0]
+	v.d[0] = v.lastDelta
+	pch := 8*v.lastChar + v.k[0]*v.d[0] + v.k[1]*v.d[1] + v.k[2]*v.d[2] + v.k[3]*v.d[3] + v.k[4]*d.chanDelta
 	pch = (pch >> 3) & 0xFF
 	ch := pch - delta
-	dd := delta << 3
+	delta <<= 3
 
-	v.dif[0] += abs(dd)
-	v.dif[1] += abs(dd - v.D1)
-	v.dif[2] += abs(dd + v.D1)
-	v.dif[3] += abs(dd - v.D2)
-	v.dif[4] += abs(dd + v.D2)
-	v.dif[5] += abs(dd - v.D3)
-	v.dif[6] += abs(dd + v.D3)
-	v.dif[7] += abs(dd - v.D4)
-	v.dif[8] += abs(dd + v.D4)
-	v.dif[9] += abs(dd - d.chanDelta)
-	v.dif[10] += abs(dd + d.chanDelta)
+	v.dif[0] += abs(delta)
+	v.dif[1] += abs(delta - v.d[0])
+	v.dif[2] += abs(delta + v.d[0])
+	v.dif[3] += abs(delta - v.d[1])
+	v.dif[4] += abs(delta + v.d[1])
+	v.dif[5] += abs(delta - v.d[2])
+	v.dif[6] += abs(delta + v.d[2])
+	v.dif[7] += abs(delta - v.d[3])
+	v.dif[8] += abs(delta + v.d[3])
+	v.dif[9] += abs(delta - d.chanDelta)
+	v.dif[10] += abs(delta + d.chanDelta)
 
 	d.chanDelta = ch - v.lastChar
 	v.lastDelta = d.chanDelta
 	v.lastChar = ch
 
-	if v.byteCount&0x1F == 0 {
-		var numMinDif int
-		minDif := v.dif[0]
-		v.dif[0] = 0
-		for i := 1; i < len(v.dif); i++ {
-			if v.dif[i] < minDif {
-				minDif = v.dif[i]
-				numMinDif = i
-			}
-			v.dif[i] = 0
+	if v.byteCount&0x1F != 0 {
+		return byte(ch)
+	}
+
+	var numMinDif int
+	minDif := v.dif[0]
+	v.dif[0] = 0
+	for i := 1; i < len(v.dif); i++ {
+		if v.dif[i] < minDif {
+			minDif = v.dif[i]
+			numMinDif = i
 		}
-		switch numMinDif {
-		case 1:
-			if v.K1 >= -16 {
-				v.K1--
+		v.dif[i] = 0
+	}
+	if numMinDif > 0 {
+		numMinDif--
+		i := numMinDif / 2
+		if numMinDif%2 == 0 {
+			if v.k[i] >= -16 {
+				v.k[i]--
 			}
-		case 2:
-			if v.K1 < 16 {
-				v.K1++
-			}
-		case 3:
-			if v.K2 >= -16 {
-				v.K2--
-			}
-		case 4:
-			if v.K2 < 16 {
-				v.K2++
-			}
-		case 5:
-			if v.K3 >= -16 {
-				v.K3--
-			}
-		case 6:
-			if v.K3 < 16 {
-				v.K3++
-			}
-		case 7:
-			if v.K4 >= -16 {
-				v.K4--
-			}
-		case 8:
-			if v.K4 < 16 {
-				v.K4++
-			}
-		case 9:
-			if v.K5 >= -16 {
-				v.K5--
-			}
-		case 10:
-			if v.K5 < 16 {
-				v.K5++
-			}
+		} else if v.k[i] < 16 {
+			v.k[i]++
 		}
 	}
 	return byte(ch)
