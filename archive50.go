@@ -81,7 +81,7 @@ func (h leHash32) Sum(b []byte) []byte {
 	return append(b, byte(s), byte(s>>8), byte(s>>16), byte(s>>24))
 }
 
-func newLittleEndianCRC32() hash.Hash32 {
+func newLittleEndianCRC32() hash.Hash {
 	return leHash32{crc32.NewIEEE()}
 }
 
@@ -245,7 +245,7 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 		}
 		f.sum = append([]byte(nil), h.data.bytes(4)...)
 		if f.first {
-			f.hash = newLittleEndianCRC32()
+			f.hash = newLittleEndianCRC32
 		}
 	}
 

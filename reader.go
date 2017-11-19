@@ -424,7 +424,7 @@ func (r *Reader) nextFile() error {
 		r.r = &limitedReader{r.r, h.UnPackedSize, errShortFile}
 	}
 	if h.hash != nil {
-		r.r = &checksumReader{r.r, h.hash, r.pr}
+		r.r = &checksumReader{r.r, h.hash(), r.pr}
 	}
 	return nil
 }
@@ -473,13 +473,9 @@ func (f *File) Open() (io.ReadCloser, error) {
 	if f.Solid {
 		return nil, errSolidOpen
 	}
-	err := f.pr.init()
-	if err != nil {
-		return nil, err
-	}
 	r := new(ReadCloser)
-	r.pr = f.pr
-	return r, nil
+	r.pr = f.pr.clone()
+	return r, r.pr.init()
 }
 
 // List returns a list of File's in the RAR archive specified by name.

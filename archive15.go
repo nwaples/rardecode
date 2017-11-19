@@ -324,7 +324,7 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 	if h.flags&fileEncrypted > 0 && len(salt) == saltSize {
 		f.key, f.iv = a.getKeys(salt)
 	}
-	f.hash = newLittleEndianCRC32()
+	f.hash = newLittleEndianCRC32
 	if method != 0 {
 		switch unpackver {
 		case 15:
