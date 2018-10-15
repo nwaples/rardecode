@@ -356,6 +356,11 @@ func (rc *ReadCloser) Close() error {
 	return rc.v.Close()
 }
 
+// ProcessedFiles returns the names of all of the files read during a decode operation.
+func (rc *ReadCloser) ProcessedFiles() []string {
+	return rc.v.processedFiles
+}
+
 // OpenReader opens a RAR archive specified by the name and returns a ReadCloser.
 func OpenReader(name, password string) (*ReadCloser, error) {
 	v, err := openVolume(name, password)
