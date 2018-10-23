@@ -237,12 +237,13 @@ func (v *volume) next() (*fileBlockHeader, error) {
 			// to tell if the archive continues is to try to open the next volume.
 			atEOF = true
 		default:
-			v.processedFiles = append(v.processedFiles, v.f.Name())
+			if err == nil {
+				v.processedFiles = append(v.processedFiles, v.f.Name())
+			}
 			return h, err
 		}
 
 		v.f.Close()
-		v.processedFiles = append(v.processedFiles, v.f.Name())
 		v.nextVolName()
 		v.f, err = os.Open(v.dir + v.file) // Open next volume file
 		if err != nil {
