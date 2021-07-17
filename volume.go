@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -28,9 +28,9 @@ var (
 )
 
 type option struct {
-	bsize int             // size to be use for bufio.Reader
-	fs    http.FileSystem // filesystem to use to open files
-	pass  string          // password for encrypted volumes
+	bsize int    // size to be use for bufio.Reader
+	fs    fs.FS  // filesystem to use to open files
+	pass  string // password for encrypted volumes
 }
 
 // An Option is used for optional archive extraction settings.
@@ -41,8 +41,8 @@ func BufferSize(size int) Option {
 	return func(o *option) { o.bsize = size }
 }
 
-// HTTPFileSystem sets the http.FileSystem to be used for opening archive volumes.
-func HTTPFileSystem(fs http.FileSystem) Option {
+// FileSystem sets the fs.FS to be used for opening archive volumes.
+func FileSystem(fs fs.FS) Option {
 	return func(o *option) { o.fs = fs }
 }
 
