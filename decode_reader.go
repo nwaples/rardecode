@@ -154,9 +154,6 @@ func (d *decodeReader) queueFilter(f *filterBlock) error {
 	}
 	// make offset relative to read index (from write index)
 	f.offset += d.w - d.r
-	// offset & length must be < window size
-	f.offset &= d.mask
-	f.length &= d.mask
 	// make offset relative to previous filter in list
 	for _, fb := range d.fl {
 		if f.offset < fb.offset {
@@ -165,6 +162,9 @@ func (d *decodeReader) queueFilter(f *filterBlock) error {
 		}
 		f.offset -= fb.offset
 	}
+	// offset & length must be < window size
+	f.offset &= d.mask
+	f.length &= d.mask
 	d.fl = append(d.fl, f)
 	return nil
 }
