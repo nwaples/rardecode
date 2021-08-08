@@ -56,7 +56,8 @@ func Password(pass string) Option {
 type volume struct {
 	f    io.Reader     // current file handle
 	br   *bufio.Reader // buffered reader for current volume file
-	name string        // current volume file name
+	dir  string        // current volume directory path
+	file string        // current volume file name
 	num  int           // volume number
 	old  bool          // uses old naming scheme
 	off  int64         // current file offset
@@ -82,28 +83,29 @@ func (v *volume) setBuffer() {
 	}
 }
 
-func (v *volume) openFile() error {
+func (v *volume) openFile(file string) error {
 	var err error
 	var f io.Reader
 
-	if len(v.name) == 0 {
+	if len(file) == 0 {
 		return errArchiveNameEmpty
 	}
 	if fs := v.opt.fs; fs != nil {
-		f, err = fs.Open(v.name)
+		f, err = fs.Open(v.dir + file)
 	} else {
-		f, err = os.Open(v.name)
+		f, err = os.Open(v.dir + file)
 	}
 	if err != nil {
 		return err
 	}
 	v.f = f
+	v.file = file
 	v.setBuffer()
 	return nil
 }
 
 func (v *volume) init() error {
-	err := v.openFile()
+	err := v.openFile(v.file)
 	if err != nil {
 		return err
 	}
@@ -125,7 +127,7 @@ func (v *volume) clone() *volume {
 func (v *volume) Close() error {
 	// v.f may be nil if os.Open fails in next().
 	// We only close if we opened it (ie. v.name provided).
-	if v.f != nil && len(v.name) > 0 {
+	if v.f != nil && len(v.file) > 0 {
 		if c, ok := v.f.(io.Closer); ok {
 			err := c.Close()
 			v.f = nil // set to nil so we can only close v.f once
@@ -310,9 +312,18 @@ func nextOldVolName(file string) string {
 	return file[:i+1] + string(b)
 }
 
+func hasDigits(s string) bool {
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
 // nextVolName updates name to the next filename in the archive.
-func (v *volume) nextVolName() {
-	dir, file := filepath.Split(v.name)
+func (v *volume) openNextFile() error {
+	file := v.file
 	if v.num == 0 {
 		// check file extensions
 		i := strings.LastIndex(file, ".")
@@ -328,13 +339,21 @@ func (v *volume) nextVolName() {
 		}
 		// new naming scheme must have volume number in filename
 		if !v.old {
-			v.old = true
-			for _, c := range file {
-				if c >= '0' && c <= '9' {
-					v.old = false
-					break
+			if hasDigits(file) {
+				// found digits, try using new naming scheme
+				err := v.openFile(nextNewVolName(file))
+				if err != nil && os.IsNotExist(err) {
+					// file didn't exist, try old naming scheme
+					oldErr := v.openFile(nextOldVolName(file))
+					if oldErr == nil || !os.IsNotExist(err) {
+						v.old = true
+						return oldErr
+					}
 				}
+				return err
 			}
+			// no digits in filename, use old naming
+			v.old = true
 		}
 	}
 	if v.old {
@@ -342,11 +361,11 @@ func (v *volume) nextVolName() {
 	} else {
 		file = nextNewVolName(file)
 	}
-	v.name = dir + file
+	return v.openFile(file)
 }
 
 func (v *volume) next() error {
-	if len(v.name) == 0 {
+	if len(v.file) == 0 {
 		return errFileNameRequired
 	}
 	err := v.Close()
@@ -354,9 +373,8 @@ func (v *volume) next() error {
 		return err
 	}
 	v.f = nil
-	v.nextVolName()
+	err = v.openNextFile() // Open next volume file
 	v.num++
-	err = v.openFile() // Open next volume file
 	if err != nil {
 		return err
 	}
@@ -375,9 +393,10 @@ func newVolume(r io.Reader, opts []Option) (*volume, error) {
 }
 
 func openVolume(name string, opts []Option) (*volume, error) {
-	v := &volume{name: name}
+	v := &volume{}
+	v.dir, v.file = filepath.Split(name)
 	v.setOpts(opts)
-	err := v.openFile()
+	err := v.openFile(v.file)
 	if err != nil {
 		return nil, err
 	}
