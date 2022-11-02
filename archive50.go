@@ -47,6 +47,13 @@ const (
 	file5EncCheckPresent = 0x0001 // password check data is present
 	file5EncUseMac       = 0x0002 // use MAC instead of plain checksum
 
+	// file system redirection flags
+	file5UnixSymlink     = 0x0001
+	file5WindowsSymlink  = 0x0002
+	file5WindowsJunction = 0x0003
+	file5HardLink        = 0x0004
+	file5FileCopy        = 0x0005
+
 	cacheSize50   = 4
 	maxPbkdf2Salt = 64
 	pwCheckSize   = 8
@@ -250,6 +257,21 @@ func (a *archive50) parseFileEncryptionRecord(b readBuf, f *fileBlockHeader) err
 	return nil
 }
 
+// parseFileRedirectionRecord processes the file reddirection record from a file header
+func (a *archive50) parseFileRedirectionRecord(b readBuf, f *fileBlockHeader) error {
+	types := b.uvarint()
+	if types&file5WindowsSymlink > 0 || types&file5UnixSymlink > 0 {
+		f.LinkType = TypeSymlink
+	} else if types&file5HardLink > 0 {
+		f.LinkType = TypeLink
+	}
+	// pass link target flags
+	b.uvarint()
+	lenName := int(b.uvarint())
+	f.LinkName = string(b.bytes(lenName))
+	return nil
+}
+
 func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) {
 	a.checksum.sum = nil
 	a.checksum.key = nil
@@ -324,7 +346,7 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 			_ = e.data.uvarint() // ignore flags field
 			f.Version = int(e.data.uvarint())
 		case 5:
-			// TODO: redirection
+			err = a.parseFileRedirectionRecord(e.data, f)
 		case 6:
 			// TODO: owner
 		}
