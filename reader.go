@@ -25,6 +25,13 @@ const (
 	maxPassword = 128
 )
 
+const (
+	// Type '0' indicates a regular file.
+	TypeReg     = '0'
+	TypeLink    = '1' // Hard link
+	TypeSymlink = '2' // Symbolic link
+)
+
 var (
 	errShortFile        = errors.New("rardecode: decoded file too short")
 	errInvalidFileBlock = errors.New("rardecode: invalid file block")
@@ -105,6 +112,8 @@ type FileHeader struct {
 	CreationTime     time.Time // creation time (non-zero if set)
 	AccessTime       time.Time // access time (non-zero if set)
 	Version          int       // file version
+	LinkType         byte      //
+	LinkName         string    // link name
 }
 
 // Mode returns an os.FileMode for the file, calculated from the Attributes field.
