@@ -8,9 +8,9 @@ const (
 )
 
 var (
-	errTooManyFilters   = errors.New("rardecode: too many filters")
-	errInvalidFilter    = errors.New("rardecode: invalid filter")
-	errMultipleDecoders = errors.New("rardecode: multiple decoders in a single archive not supported")
+	errTooManyFilters   = errors.New("rar decode: too many filters")
+	errInvalidFilter    = errors.New("rar decode: invalid filter")
+	errMultipleDecoders = errors.New("rar decode: multiple decoders in a single archive not supported")
 )
 
 // filter functions take a byte slice, the current output offset and

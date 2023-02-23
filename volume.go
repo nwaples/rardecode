@@ -21,16 +21,17 @@ const (
 )
 
 var (
-	errNoSig            = errors.New("rardecode: RAR signature not found")
-	errVerMismatch      = errors.New("rardecode: volume version mistmatch")
-	errArchiveNameEmpty = errors.New("rardecode: archive name empty")
-	errFileNameRequired = errors.New("rardecode: filename required for multi volume archive")
+	errNoSig            = errors.New("rar decode: RAR signature not found")
+	errVerMismatch      = errors.New("rar decode: volume version mistmatch")
+	errArchiveNameEmpty = errors.New("rar decode: archive name empty")
+	errFileNameRequired = errors.New("rar decode: filename required for multi volume archive")
 )
 
 type option struct {
 	bsize int    // size to be use for bufio.Reader
 	fs    fs.FS  // filesystem to use to open files
 	pass  string // password for encrypted volumes
+	list  bool   // only list files
 }
 
 // An Option is used for optional archive extraction settings.
@@ -49,6 +50,11 @@ func FileSystem(fs fs.FS) Option {
 // Password sets the password to use for decrypting archives.
 func Password(pass string) Option {
 	return func(o *option) { o.pass = pass }
+}
+
+// ListOnly list files only, skip password decrypt
+func ListOnly() Option {
+	return func(o *option) { o.list = true }
 }
 
 // volume extends a fileBlockReader to be used across multiple

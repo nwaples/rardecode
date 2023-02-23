@@ -52,9 +52,9 @@ const (
 )
 
 var (
-	errBadPassword      = errors.New("rardecode: incorrect password")
-	errCorruptEncrypt   = errors.New("rardecode: corrupt encryption data")
-	errUnknownEncMethod = errors.New("rardecode: unknown encryption method")
+	errBadPassword      = errors.New("rar decode: incorrect password")
+	errCorruptEncrypt   = errors.New("rar decode: corrupt encryption data")
+	errUnknownEncMethod = errors.New("rar decode: unknown encryption method")
 )
 
 type extra struct {
@@ -221,7 +221,7 @@ func (a *archive50) parseFileEncryptionRecord(b readBuf, f *fileBlockHeader) err
 	return nil
 }
 
-func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) {
+func (a *archive50) parseFileHeader(h *blockHeader50, skipEncrypt bool) (*fileBlockHeader, error) {
 	f := new(fileBlockHeader)
 
 	f.first = h.flags&block5DataNotFirst == 0
@@ -280,7 +280,9 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 		var err error
 		switch e.ftype {
 		case 1: // encryption
-			err = a.parseFileEncryptionRecord(e.data, f)
+			if !skipEncrypt {
+				err = a.parseFileEncryptionRecord(e.data, f)
+			}
 		case 2:
 			// TODO: hash
 		case 3:
@@ -404,13 +406,15 @@ func (a *archive50) next(v *volume) (*fileBlockHeader, error) {
 		}
 		switch h.htype {
 		case block5File:
-			return a.parseFileHeader(h)
+			return a.parseFileHeader(h, v.opt.list)
 		case block5Arc:
 			flags := h.data.uvarint()
 			a.multi = flags&arc5MultiVol > 0
 			a.solid = flags&arc5Solid > 0
 		case block5Encrypt:
-			err = a.parseEncryptionBlock(h.data)
+			if !v.opt.list {
+				err = a.parseEncryptionBlock(h.data)
+			}
 		case block5End:
 			flags := h.data.uvarint()
 			if flags&endArc5NotLast == 0 || !a.multi {

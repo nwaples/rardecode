@@ -31,7 +31,7 @@ const (
 )
 
 var (
-	errCorruptPPM = errors.New("rardecode: corrupt ppm data")
+	errCorruptPPM = errors.New("rar decode: corrupt ppm data")
 
 	expEscape  = []byte{25, 14, 9, 7, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 2}
 	initBinEsc = []uint16{0x3CDD, 0x1F3F, 0x59BF, 0x48F3, 0x64A1, 0x5ABC, 0x6632, 0x6051}

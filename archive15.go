@@ -50,7 +50,7 @@ const (
 )
 
 var (
-	errUnsupportedDecoder = errors.New("rardecode: unsupported decoder version")
+	errUnsupportedDecoder = errors.New("rar decode: unsupported decoder version")
 )
 
 type blockHeader15 struct {

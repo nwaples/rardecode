@@ -19,7 +19,7 @@ const (
 )
 
 var (
-	errInvalidVMInstruction = errors.New("rardecode: invalid vm instruction")
+	errInvalidVMInstruction = errors.New("rar decode: invalid vm instruction")
 )
 
 type vm struct {

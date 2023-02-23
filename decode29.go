@@ -12,9 +12,9 @@ const (
 
 var (
 	// Errors marking the end of the decoding block and/or file
-	errEndOfFile         = errors.New("rardecode: end of file")
-	errEndOfBlock        = errors.New("rardecode: end of block")
-	errEndOfBlockAndFile = errors.New("rardecode: end of block and file")
+	errEndOfFile         = errors.New("rar decode: end of file")
+	errEndOfBlock        = errors.New("rar decode: end of block")
+	errEndOfBlockAndFile = errors.New("rar decode: end of block and file")
 )
 
 // decoder29 implements the decoder interface for RAR 3.0 compression (unpack version 29)

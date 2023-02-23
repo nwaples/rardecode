@@ -13,11 +13,11 @@ const (
 )
 
 var (
-	errCorruptHeader     = errors.New("rardecode: corrupt block header")
-	errCorruptFileHeader = errors.New("rardecode: corrupt file header")
-	errBadHeaderCrc      = errors.New("rardecode: bad header crc")
-	errUnknownDecoder    = errors.New("rardecode: unknown decoder version")
-	errDecoderOutOfData  = errors.New("rardecode: decoder expected more data than is in packed file")
+	errCorruptHeader     = errors.New("rar decode: corrupt block header")
+	errCorruptFileHeader = errors.New("rar decode: corrupt file header")
+	errBadHeaderCrc      = errors.New("rar decode: bad header crc")
+	errUnknownDecoder    = errors.New("rar decode: unknown decoder version")
+	errDecoderOutOfData  = errors.New("rar decode: decoder expected more data than is in packed file")
 )
 
 type readBuf []byte

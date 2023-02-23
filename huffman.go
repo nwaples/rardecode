@@ -12,8 +12,8 @@ const (
 )
 
 var (
-	errHuffDecodeFailed   = errors.New("rardecode: huffman decode failed")
-	errInvalidLengthTable = errors.New("rardecode: invalid huffman code length table")
+	errHuffDecodeFailed   = errors.New("rar decode: huffman decode failed")
+	errInvalidLengthTable = errors.New("rar decode: invalid huffman code length table")
 )
 
 type huffmanDecoder struct {

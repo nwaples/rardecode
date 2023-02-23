@@ -14,8 +14,8 @@ const (
 )
 
 var (
-	errUnknownFilter       = errors.New("rardecode: unknown V5 filter")
-	errCorruptDecodeHeader = errors.New("rardecode: corrupt decode header")
+	errUnknownFilter       = errors.New("rar decode: unknown V5 filter")
+	errCorruptDecodeHeader = errors.New("rar decode: corrupt decode header")
 )
 
 // decoder50 implements the decoder interface for RAR 5 compression.

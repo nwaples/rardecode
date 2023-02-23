@@ -28,12 +28,12 @@ const (
 )
 
 var (
-	errShortFile        = errors.New("rardecode: decoded file too short")
-	errInvalidFileBlock = errors.New("rardecode: invalid file block")
-	errUnexpectedArcEnd = errors.New("rardecode: unexpected end of archive")
-	errBadFileChecksum  = errors.New("rardecode: bad file checksum")
-	errSolidOpen        = errors.New("rardecode: solid files don't support Open")
-	errUnknownArc       = errors.New("rardecode: unknown archive version")
+	errShortFile        = errors.New("rar decode: decoded file too short")
+	errInvalidFileBlock = errors.New("rar decode: invalid file block")
+	errUnexpectedArcEnd = errors.New("rar decode: unexpected end of archive")
+	errBadFileChecksum  = errors.New("rar decode: bad file checksum")
+	errSolidOpen        = errors.New("rar decode: solid files don't support Open")
+	errUnknownArc       = errors.New("rar decode: unknown archive version")
 )
 
 // FileHeader represents a single file in a RAR archive.
@@ -479,12 +479,12 @@ func (f *File) Open() (io.ReadCloser, error) {
 }
 
 // List returns a list of File's in the RAR archive specified by name.
-func List(name string, opts ...Option) ([]*File, error) {
-	r, err := OpenReader(name, opts...)
+func List(r io.Reader, opts ...Option) ([]*File, error) {
+	opts = append(opts, ListOnly())
+	pr, err := newPackedFileReader(r, opts)
 	if err != nil {
 		return nil, err
 	}
-	pr := r.pr
 	defer pr.Close()
 
 	var fl []*File
