@@ -115,7 +115,7 @@ func (d *audio20Decoder) fill(dr *decodeReader, size int64) (int64, error) {
 			return n, err
 		}
 		if sym == 256 {
-			return n, errEndOfBlock
+			return n, ErrEndOfBlock
 		}
 		dr.writeByte(d.decode(sym))
 		n++

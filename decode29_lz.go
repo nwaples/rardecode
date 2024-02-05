@@ -117,16 +117,16 @@ func (d *lz29Decoder) readEndOfBlock() error {
 		return err
 	}
 	if n > 0 {
-		return errEndOfBlock
+		return ErrEndOfBlock
 	}
 	n, err = d.br.readBits(1)
 	if err != nil {
 		return err
 	}
 	if n > 0 {
-		return errEndOfBlockAndFile
+		return ErrEndOfBlockAndFile
 	}
-	return errEndOfFile
+	return ErrEndOfFile
 }
 
 func (d *lz29Decoder) decodeLength(dr *decodeReader, i int) error {
