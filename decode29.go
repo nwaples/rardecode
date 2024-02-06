@@ -12,9 +12,9 @@ const (
 
 var (
 	// Errors marking the end of the decoding block and/or file
-	errEndOfFile         = errors.New("rardecode: end of file")
-	errEndOfBlock        = errors.New("rardecode: end of block")
-	errEndOfBlockAndFile = errors.New("rardecode: end of block and file")
+	ErrEndOfFile         = errors.New("rardecode: end of file")
+	ErrEndOfBlock        = errors.New("rardecode: end of block")
+	ErrEndOfBlockAndFile = errors.New("rardecode: end of block and file")
 )
 
 // decoder29 implements the decoder interface for RAR 3.0 compression (unpack version 29)
@@ -70,7 +70,7 @@ func readVMCode(br *rarBitReader) ([]byte, error) {
 		return nil, err
 	}
 	if n > maxCodeSize || n == 0 {
-		return nil, errInvalidFilter
+		return nil, ErrInvalidFilter
 	}
 	buf := make([]byte, n)
 	err = br.readFull(buf)
@@ -83,7 +83,7 @@ func readVMCode(br *rarBitReader) ([]byte, error) {
 	}
 	// simple xor checksum on data
 	if x != buf[0] {
-		return nil, errInvalidFilter
+		return nil, ErrInvalidFilter
 	}
 	return buf, nil
 }
@@ -105,10 +105,10 @@ func (d *decoder29) parseVMFilter(buf []byte) (*filterBlock, error) {
 		} else {
 			n--
 			if n > maxUniqueFilters {
-				return nil, errInvalidFilter
+				return nil, ErrInvalidFilter
 			}
 			if int(n) > len(d.filters) {
-				return nil, errInvalidFilter
+				return nil, ErrInvalidFilter
 			}
 		}
 		d.fnum = int(n)
@@ -178,7 +178,7 @@ func (d *decoder29) parseVMFilter(buf []byte) (*filterBlock, error) {
 			return nil, err
 		}
 		if n > vmGlobalSize-vmFixedGlobalSize {
-			return nil, errInvalidFilter
+			return nil, ErrInvalidFilter
 		}
 		g = make([]byte, n)
 		err = br.readFull(g)
@@ -216,7 +216,7 @@ func (d *decoder29) readBlockHeader() error {
 		}
 	}
 	if err == io.EOF {
-		err = errDecoderOutOfData
+		err = ErrDecoderOutOfData
 	}
 	d.hdrRead = true
 	return err
@@ -252,18 +252,18 @@ func (d *decoder29) fill(dr *decodeReader) error {
 		switch err {
 		case nil:
 			continue
-		case errEndOfBlock:
+		case ErrEndOfBlock:
 			d.hdrRead = false
 			continue
-		case errEndOfFile:
+		case ErrEndOfFile:
 			d.eof = true
 			err = io.EOF
-		case errEndOfBlockAndFile:
+		case ErrEndOfBlockAndFile:
 			d.eof = true
 			d.hdrRead = false
 			err = io.EOF
 		case io.EOF:
-			err = errDecoderOutOfData
+			err = ErrDecoderOutOfData
 		}
 		return err
 	}

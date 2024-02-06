@@ -132,7 +132,7 @@ func (d *lz20Decoder) fill(dr *decodeReader, size int64) (int64, error) {
 		case sym > 269:
 			err = d.decodeOffset(dr, sym-270)
 		case sym == 269:
-			return n, errEndOfBlock
+			return n, ErrEndOfBlock
 		case sym == 256: // use previous offset and length
 			copy(d.offset[1:], d.offset[:])
 		case sym < 261:
