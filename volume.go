@@ -321,7 +321,7 @@ func hasDigits(s string) bool {
 	return false
 }
 
-// nextVolName updates name to the next filename in the archive.
+// openNextFile opens the next volume file in the archive.
 func (v *volume) openNextFile() error {
 	file := v.file
 	if v.num == 0 {
