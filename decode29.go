@@ -204,7 +204,7 @@ func (d *decoder29) readBlockHeader() error {
 		if n > 0 {
 			d.isPPM = true
 			if d.ppm == nil {
-				d.ppm = new(ppm29Decoder)
+				d.ppm = newPPM29Decoder()
 			}
 			err = d.ppm.init(d.br)
 		} else {
