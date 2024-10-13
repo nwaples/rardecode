@@ -17,6 +17,7 @@ const (
 	// block types
 	blockArc     = 0x73
 	blockFile    = 0x74
+	blockComment = 0x75
 	blockService = 0x7a
 	blockEnd     = 0x7b
 
@@ -25,6 +26,7 @@ const (
 
 	// archive block flags
 	arcVolume    = 0x0001
+	arcComment   = 0x0002
 	arcSolid     = 0x0008
 	arcNewNaming = 0x0010
 	arcEncrypted = 0x0080
@@ -366,7 +368,13 @@ func (a *archive15) readBlockHeader(r sliceReader) (*blockHeader15, error) {
 	h.htype = b.byte()
 	h.flags = b.uint16()
 	size := int(b.uint16())
-	if size < 7 {
+	if h.htype == blockArc && h.flags&arcComment > 0 {
+		// comment block embedded into archive block
+		if size < 13 {
+			return nil, ErrCorruptBlockHeader
+		}
+		size = 13
+	} else if size < 7 {
 		return nil, ErrCorruptBlockHeader
 	}
 	h.data, err = r.readSlice(size)
@@ -377,7 +385,14 @@ func (a *archive15) readBlockHeader(r sliceReader) (*blockHeader15, error) {
 		return nil, err
 	}
 	hash := crc32.NewIEEE()
-	_, _ = hash.Write(h.data[2:]) // Write should always succeed
+	if h.htype == blockComment {
+		if size < 13 {
+			return nil, ErrCorruptBlockHeader
+		}
+		_, _ = hash.Write(h.data[2:13])
+	} else {
+		_, _ = hash.Write(h.data[2:])
+	}
 	if crc != uint16(hash.Sum32()) {
 		return nil, ErrBadHeaderCRC
 	}
