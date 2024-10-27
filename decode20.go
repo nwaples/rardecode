@@ -104,7 +104,6 @@ func readCodeLengthTable20(br *rarBitReader, table []byte) error {
 }
 
 func (d *decoder20) readBlockHeader() error {
-	d.br.alignByte()
 	n, err := d.br.readBits(1)
 	if err != nil {
 		return err
