@@ -8,6 +8,7 @@ import (
 	"hash"
 	"hash/crc32"
 	"io"
+	"math/bits"
 	"time"
 )
 
@@ -44,6 +45,13 @@ const (
 	// file encryption record flags
 	file5EncCheckPresent = 0x0001 // password check data is present
 	file5EncUseMac       = 0x0002 // use MAC instead of plain checksum
+
+	// precision time flags
+	file5ExtraTimeIsUnixTime = 0x01 // is unix time_t
+	file5ExtraTimeHasMTime   = 0x02 // has modification time
+	file5ExtraTimeHasCTime   = 0x04 // has creation time
+	file5ExtraTimeHasATime   = 0x08 // has access time
+	file5ExtraTimeHasUnixNS  = 0x10 // unix nanosecond time format
 
 	cacheSize50   = 4
 	maxPbkdf2Salt = 64
@@ -221,6 +229,96 @@ func (a *archive50) parseFileEncryptionRecord(b readBuf, f *fileBlockHeader) err
 	return nil
 }
 
+func readWinFiletime(b *readBuf) (time.Time, error) {
+	if len(*b) < 8 {
+		return time.Time{}, ErrCorruptFileHeader
+	}
+	// 100-nanosecond intervals since January 1, 1601
+	t := b.uint64() - 116444736000000000
+	t *= 100
+	sec, nsec := bits.Div64(0, t, uint64(time.Second))
+	return time.Unix(int64(sec), int64(nsec)), nil
+}
+
+func readUnixTime(b *readBuf) (time.Time, error) {
+	if len(*b) < 4 {
+		return time.Time{}, ErrCorruptFileHeader
+	}
+	return time.Unix(int64(b.uint32()), 0), nil
+}
+
+func readUnixNanoseconds(b *readBuf) (time.Duration, error) {
+	if len(*b) < 4 {
+		return 0, ErrCorruptFileHeader
+	}
+	d := time.Duration(b.uint32() & 0x3fffffff)
+	if d >= time.Second {
+		return 0, ErrCorruptFileHeader
+	}
+	return d, nil
+}
+
+// parseFilePrecisionTimeRecord processes the optional high precision time record from a file header.
+func (a *archive50) parseFilePrecisionTimeRecord(b *readBuf, f *fileBlockHeader) error {
+	var err error
+	flags := b.uvarint()
+	isUnixTime := flags&file5ExtraTimeIsUnixTime > 0
+	if flags&file5ExtraTimeHasMTime > 0 {
+		if isUnixTime {
+			f.ModificationTime, err = readUnixTime(b)
+		} else {
+			f.ModificationTime, err = readWinFiletime(b)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if flags&file5ExtraTimeHasCTime > 0 {
+		if isUnixTime {
+			f.CreationTime, err = readUnixTime(b)
+		} else {
+			f.CreationTime, err = readWinFiletime(b)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if flags&file5ExtraTimeHasATime > 0 {
+		if isUnixTime {
+			f.AccessTime, err = readUnixTime(b)
+		} else {
+			f.AccessTime, err = readWinFiletime(b)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if isUnixTime && flags&file5ExtraTimeHasUnixNS > 0 {
+		if flags&file5ExtraTimeHasMTime > 0 {
+			ns, err := readUnixNanoseconds(b)
+			if err != nil {
+				return err
+			}
+			f.ModificationTime = f.ModificationTime.Add(ns)
+		}
+		if flags&file5ExtraTimeHasCTime > 0 {
+			ns, err := readUnixNanoseconds(b)
+			if err != nil {
+				return err
+			}
+			f.CreationTime = f.CreationTime.Add(ns)
+		}
+		if flags&file5ExtraTimeHasATime > 0 {
+			ns, err := readUnixNanoseconds(b)
+			if err != nil {
+				return err
+			}
+			f.AccessTime = f.AccessTime.Add(ns)
+		}
+	}
+	return nil
+}
+
 func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) {
 	f := new(fileBlockHeader)
 
@@ -284,7 +382,7 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 		case 2:
 			// TODO: hash
 		case 3:
-			// TODO: time
+			err = a.parseFilePrecisionTimeRecord(&e.data, f)
 		case 4: // version
 			_ = e.data.uvarint() // ignore flags field
 			f.Version = int(e.data.uvarint())

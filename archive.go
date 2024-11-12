@@ -40,6 +40,13 @@ func (b *readBuf) uint32() uint32 {
 	return v
 }
 
+func (b *readBuf) uint64() uint64 {
+	v := uint64((*b)[0]) | uint64((*b)[1])<<8 | uint64((*b)[2])<<16 | uint64((*b)[3])<<24 |
+		uint64((*b)[4])<<32 | uint64((*b)[5])<<40 | uint64((*b)[6])<<48 | uint64((*b)[7])<<56
+	*b = (*b)[8:]
+	return v
+}
+
 func (b *readBuf) bytes(n int) []byte {
 	v := (*b)[:n]
 	*b = (*b)[n:]
