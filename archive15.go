@@ -252,7 +252,7 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 	f.arcSolid = a.solid
 	f.IsDir = h.flags&fileWindowMask == fileWindowMask
 	if !f.IsDir {
-		f.winSize = uint(h.flags&fileWindowMask)>>5 + 16
+		f.winSize = 0x10000 << ((h.flags & fileWindowMask) >> 5)
 	}
 
 	b := h.data

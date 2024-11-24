@@ -11,6 +11,9 @@ const (
 	lowoffsetSize5 = 16
 	lengthSize5    = 44
 	tableSize5     = mainSize5 + offsetSize5 + lowoffsetSize5 + lengthSize5
+
+	offsetSize7 = 80
+	tableSize7  = mainSize5 + offsetSize7 + lowoffsetSize5 + lengthSize5
 )
 
 var (
@@ -24,7 +27,9 @@ var (
 // the huffman decoders with.
 type decoder50 struct {
 	br         rar5BitReader // bit reader for current data block
-	codeLength [tableSize5]byte
+	buf        [tableSize7]byte
+	codeLength []byte
+	offsetSize int
 
 	lastBlock bool // current block is last block in compressed file
 
@@ -39,9 +44,16 @@ type decoder50 struct {
 
 func (d *decoder50) version() int { return decode50Ver }
 
-func (d *decoder50) init(r byteReader, reset bool, size int64) {
+func (d *decoder50) init(r byteReader, reset bool, size int64, ver int) {
 	d.br.reset(r)
 	d.lastBlock = false
+	if ver == decode70Ver {
+		d.codeLength = d.buf[:]
+		d.offsetSize = offsetSize7
+	} else {
+		d.codeLength = d.buf[:tableSize5]
+		d.offsetSize = offsetSize5
+	}
 
 	if reset {
 		for i := range d.offset {
@@ -100,8 +112,8 @@ func (d *decoder50) readBlockHeader() error {
 		}
 		d.mainDecoder.init(cl[:mainSize5])
 		cl = cl[mainSize5:]
-		d.offsetDecoder.init(cl[:offsetSize5])
-		cl = cl[offsetSize5:]
+		d.offsetDecoder.init(cl[:d.offsetSize])
+		cl = cl[d.offsetSize:]
 		d.lowoffsetDecoder.init(cl[:lowoffsetSize5])
 		cl = cl[lowoffsetSize5:]
 		d.lengthDecoder.init(cl)

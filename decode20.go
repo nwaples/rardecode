@@ -21,7 +21,7 @@ type decoder20 struct {
 func (d *decoder20) version() int { return decode20Ver }
 
 // init intializes the decoder for decoding a new file.
-func (d *decoder20) init(r byteReader, reset bool, size int64) {
+func (d *decoder20) init(r byteReader, reset bool, size int64, ver int) {
 	if d.br == nil {
 		d.br = newRarBitReader(r)
 	} else {

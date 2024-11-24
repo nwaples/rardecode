@@ -8,6 +8,7 @@ import (
 	"hash"
 	"hash/crc32"
 	"io"
+	"math"
 	"math/bits"
 	"time"
 )
@@ -42,6 +43,14 @@ const (
 	file5HasCRC32       = 0x0004
 	file5UnpSizeUnknown = 0x0008
 
+	// file compression flags
+	file5CompAlgorithm = 0x0000003F
+	file5CompSolid     = 0x00000040
+	file5CompMethod    = 0x00000380
+	file5CompDictSize  = 0x00007C00
+	file5CompDictFract = 0x000F8000
+	file5CompV5Compat  = 0x00100000
+
 	// file encryption record flags
 	file5EncCheckPresent = 0x0001 // password check data is present
 	file5EncUseMac       = 0x0002 // use MAC instead of plain checksum
@@ -57,12 +66,16 @@ const (
 	maxPbkdf2Salt = 64
 	pwCheckSize   = 8
 	maxKdfCount   = 24
+
+	maxDictSize = 0x1000000000 // maximum dictionary size 64GB
 )
 
 var (
 	ErrBadPassword          = errors.New("rardecode: incorrect password")
 	ErrCorruptEncryptData   = errors.New("rardecode: corrupt encryption data")
 	ErrUnknownEncryptMethod = errors.New("rardecode: unknown encryption method")
+	ErrPlatformIntSize      = errors.New("rardecode: platform integer size too small")
+	ErrDictionaryTooLarge   = errors.New("rardecode: decode dictionary too large")
 )
 
 type extra struct {
@@ -348,16 +361,33 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 	}
 
 	flags = h.data.uvarint() // compression flags
-	f.Solid = flags&0x0040 > 0
+	f.Solid = flags&file5CompSolid > 0
 	f.arcSolid = a.solid
-	f.winSize = uint(flags&0x3C00)>>10 + 17
 	method := (flags >> 7) & 7 // compression method (0 == none)
 	if f.first && method != 0 {
-		unpackver := flags & 0x003f
-		if unpackver != 0 {
+		unpackver := flags & file5CompAlgorithm
+		var winSize int64
+		if unpackver == 0 {
+			f.decVer = decode50Ver
+			winSize = 0x20000 << ((flags >> 10) & 0x0F)
+		} else if unpackver == 1 {
+			if flags&file5CompV5Compat > 0 {
+				f.decVer = decode50Ver
+			} else {
+				f.decVer = decode70Ver
+			}
+			winSize = 0x20000 << ((flags >> 10) & 0x1F)
+			winSize += winSize / 32 * int64((flags>>15)&0x1F)
+			if winSize > maxDictSize {
+				return nil, ErrDictionaryTooLarge
+			}
+		} else {
 			return nil, ErrUnknownDecoder
 		}
-		f.decVer = decode50Ver
+		if winSize > math.MaxInt {
+			return nil, ErrPlatformIntSize
+		}
+		f.winSize = int(winSize)
 	}
 	switch h.data.uvarint() {
 	case 0:

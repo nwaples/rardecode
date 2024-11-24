@@ -10,6 +10,7 @@ const (
 	decode20Ver
 	decode29Ver
 	decode50Ver
+	decode70Ver
 )
 
 var (
@@ -90,7 +91,7 @@ type fileBlockHeader struct {
 	first    bool             // first block in file
 	last     bool             // last block in file
 	arcSolid bool             // archive is solid
-	winSize  uint             // log base 2 of decode window size
+	winSize  int              // decode window size
 	hash     func() hash.Hash // hash used for file checksum
 	hashKey  []byte           // optional hmac key to be used calculate file checksum
 	sum      []byte           // expected checksum for file contents
