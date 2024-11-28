@@ -211,6 +211,9 @@ func (a *archive50) getKeys(kdfCount int, salt, check []byte) ([][]byte, error) 
 
 // parseFileEncryptionRecord processes the optional file encryption record from a file header.
 func (a *archive50) parseFileEncryptionRecord(b readBuf, f *fileBlockHeader) error {
+	if a.pass == nil {
+		return ErrArchivedFileEncrypted
+	}
 	if ver := b.uvarint(); ver != 0 {
 		return ErrUnknownEncryptMethod
 	}
@@ -430,6 +433,9 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 
 // parseEncryptionBlock calculates the key for block encryption.
 func (a *archive50) parseEncryptionBlock(b readBuf) error {
+	if a.pass == nil {
+		return ErrArchiveEncrypted
+	}
 	if ver := b.uvarint(); ver != 0 {
 		return ErrUnknownEncryptMethod
 	}
@@ -558,8 +564,10 @@ func (a *archive50) next(v *volume) (*fileBlockHeader, error) {
 }
 
 // newArchive50 creates a new fileBlockReader for a Version 5 archive.
-func newArchive50(password string) *archive50 {
+func newArchive50(password *string) *archive50 {
 	a := new(archive50)
-	a.pass = []byte(password)
+	if password != nil {
+		a.pass = []byte(*password)
+	}
 	return a
 }

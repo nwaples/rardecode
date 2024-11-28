@@ -28,9 +28,9 @@ var (
 )
 
 type option struct {
-	bsize int    // size to be use for bufio.Reader
-	fs    fs.FS  // filesystem to use to open files
-	pass  string // password for encrypted volumes
+	bsize int     // size to be use for bufio.Reader
+	fs    fs.FS   // filesystem to use to open files
+	pass  *string // password for encrypted volumes
 }
 
 // An Option is used for optional archive extraction settings.
@@ -48,7 +48,7 @@ func FileSystem(fs fs.FS) Option {
 
 // Password sets the password to use for decrypting archives.
 func Password(pass string) Option {
-	return func(o *option) { o.pass = pass }
+	return func(o *option) { o.pass = &pass }
 }
 
 // volume extends a fileBlockReader to be used across multiple

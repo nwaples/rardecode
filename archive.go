@@ -14,11 +14,13 @@ const (
 )
 
 var (
-	ErrCorruptBlockHeader = errors.New("rardecode: corrupt block header")
-	ErrCorruptFileHeader  = errors.New("rardecode: corrupt file header")
-	ErrBadHeaderCRC       = errors.New("rardecode: bad header crc")
-	ErrUnknownDecoder     = errors.New("rardecode: unknown decoder version")
-	ErrDecoderOutOfData   = errors.New("rardecode: decoder expected more data than is in packed file")
+	ErrCorruptBlockHeader    = errors.New("rardecode: corrupt block header")
+	ErrCorruptFileHeader     = errors.New("rardecode: corrupt file header")
+	ErrBadHeaderCRC          = errors.New("rardecode: bad header crc")
+	ErrUnknownDecoder        = errors.New("rardecode: unknown decoder version")
+	ErrDecoderOutOfData      = errors.New("rardecode: decoder expected more data than is in packed file")
+	ErrArchiveEncrypted      = errors.New("rardecode: archive encrypted, password required")
+	ErrArchivedFileEncrypted = errors.New("rardecode: archived files encrypted, password required")
 )
 
 type readBuf []byte
@@ -109,9 +111,12 @@ type fileBlockReader interface {
 
 func newFileBlockReader(v *volume) (fileBlockReader, error) {
 	pass := v.opt.pass
-	runes := []rune(pass)
-	if len(runes) > maxPassword {
-		pass = string(runes[:maxPassword])
+	if pass != nil {
+		runes := []rune(*pass)
+		if len(runes) > maxPassword {
+			pw := string(runes[:maxPassword])
+			pass = &pw
+		}
 	}
 	switch v.ver {
 	case 0:
