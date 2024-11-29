@@ -284,7 +284,7 @@ func (cr *checksumReader) eofError() error {
 	// calculate file checksum
 	h := cr.pr.h
 	sum := cr.hash.Sum(nil)
-	if h.genKeys != nil {
+	if !h.first && h.genKeys != nil {
 		if err := h.genKeys(); err != nil {
 			return err
 		}
