@@ -313,7 +313,7 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 		if len(b) < saltSize {
 			return nil, ErrCorruptFileHeader
 		}
-		salt = b.bytes(saltSize)
+		salt = append([]byte(nil), b.bytes(saltSize)...)
 	}
 	if h.flags&fileExtTime > 0 {
 		readExtTimes(f, &b)
@@ -324,10 +324,13 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 	}
 	// fields only needed for first block in a file
 	if h.flags&fileEncrypted > 0 && len(salt) == saltSize {
-		if a.pass == nil {
-			return nil, ErrArchivedFileEncrypted
+		f.genKeys = func() error {
+			if a.pass == nil {
+				return ErrArchivedFileEncrypted
+			}
+			f.key, f.iv = a.getKeys(salt)
+			return nil
 		}
-		f.key, f.iv = a.getKeys(salt)
 	}
 	f.hash = newLittleEndianCRC32
 	if method != 0 {

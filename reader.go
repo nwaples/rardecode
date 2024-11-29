@@ -284,6 +284,11 @@ func (cr *checksumReader) eofError() error {
 	// calculate file checksum
 	h := cr.pr.h
 	sum := cr.hash.Sum(nil)
+	if h.genKeys != nil {
+		if err := h.genKeys(); err != nil {
+			return err
+		}
+	}
 	if len(h.hashKey) > 0 {
 		mac := hmac.New(sha256.New, h.hashKey)
 		_, _ = mac.Write(sum) // ignore error, should always succeed
@@ -405,8 +410,8 @@ func (r *Reader) nextFile() error {
 	// start with packed file reader
 	r.r = r.pr
 	// check for encryption
-	if len(h.key) > 0 && len(h.iv) > 0 {
-		r.r = newAesDecryptReader(r.pr, h.key, h.iv) // decrypt
+	if h.genKeys != nil {
+		r.r = newAesDecryptReader(r.pr, h) // decrypt
 	}
 	// check for compression
 	if h.decVer > 0 {

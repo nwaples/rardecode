@@ -100,6 +100,7 @@ type fileBlockHeader struct {
 	decVer   int              // decoder to use for file
 	key      []byte           // key for AES, non-empty if file encrypted
 	iv       []byte           // iv for AES, non-empty if file encrypted
+	genKeys  func() error     // generates key & iv fields
 	FileHeader
 }
 

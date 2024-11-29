@@ -211,9 +211,6 @@ func (a *archive50) getKeys(kdfCount int, salt, check []byte) ([][]byte, error) 
 
 // parseFileEncryptionRecord processes the optional file encryption record from a file header.
 func (a *archive50) parseFileEncryptionRecord(b readBuf, f *fileBlockHeader) error {
-	if a.pass == nil {
-		return ErrArchivedFileEncrypted
-	}
 	if ver := b.uvarint(); ver != 0 {
 		return ErrUnknownEncryptMethod
 	}
@@ -222,7 +219,7 @@ func (a *archive50) parseFileEncryptionRecord(b readBuf, f *fileBlockHeader) err
 		return ErrCorruptEncryptData
 	}
 	kdfCount := int(b.byte())
-	salt := b.bytes(16)
+	salt := append([]byte(nil), b.bytes(16)...)
 	f.iv = append([]byte(nil), b.bytes(16)...)
 
 	var check []byte
@@ -230,17 +227,28 @@ func (a *archive50) parseFileEncryptionRecord(b readBuf, f *fileBlockHeader) err
 		if len(b) < 12 {
 			return ErrCorruptEncryptData
 		}
-		check = b.bytes(12)
+		check = append([]byte(nil), b.bytes(12)...)
 	}
-
-	keys, err := a.getKeys(kdfCount, salt, check)
-	if err != nil {
-		return err
+	useMac := flags&file5EncUseMac > 0
+	// only need to generate keys for first block or
+	// last block if it has an optional hash key
+	if !(f.first || (f.last && useMac)) {
+		return nil
 	}
+	f.genKeys = func() error {
+		if a.pass == nil {
+			return ErrArchivedFileEncrypted
+		}
+		keys, err := a.getKeys(kdfCount, salt, check)
+		if err != nil {
+			return err
+		}
 
-	f.key = keys[0]
-	if flags&file5EncUseMac > 0 {
-		f.hashKey = keys[1]
+		f.key = keys[0]
+		if useMac {
+			f.hashKey = keys[1]
+		}
+		return nil
 	}
 	return nil
 }
