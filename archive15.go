@@ -250,6 +250,7 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 
 	f.Solid = h.flags&fileSolid > 0
 	f.arcSolid = a.solid
+	f.Encrypted = h.flags&fileEncrypted > 0
 	f.IsDir = h.flags&fileWindowMask == fileWindowMask
 	if !f.IsDir {
 		f.winSize = 0x10000 << ((h.flags & fileWindowMask) >> 5)

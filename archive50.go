@@ -211,6 +211,7 @@ func (a *archive50) getKeys(kdfCount int, salt, check []byte) ([][]byte, error) 
 
 // parseFileEncryptionRecord processes the optional file encryption record from a file header.
 func (a *archive50) parseFileEncryptionRecord(b readBuf, f *fileBlockHeader) error {
+	f.Encrypted = true
 	if ver := b.uvarint(); ver != 0 {
 		return ErrUnknownEncryptMethod
 	}
