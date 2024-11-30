@@ -100,6 +100,32 @@ type byteReader interface {
 	bytes() ([]byte, error)
 }
 
+type bufByteReader struct {
+	buf []byte
+}
+
+func (b *bufByteReader) Read(p []byte) (int, error) {
+	if len(b.buf) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, b.buf)
+	b.buf = b.buf[n:]
+	return n, nil
+}
+
+func (b *bufByteReader) bytes() ([]byte, error) {
+	if len(b.buf) == 0 {
+		return nil, io.EOF
+	}
+	buf := b.buf
+	b.buf = nil
+	return buf, nil
+}
+
+func newBufByteReader(buf []byte) *bufByteReader {
+	return &bufByteReader{buf: buf}
+}
+
 // packedFileReader provides sequential access to packed files in a RAR archive.
 type packedFileReader struct {
 	n int64 // bytes left in current data block

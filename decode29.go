@@ -90,7 +90,7 @@ func readVMCode(br *rarBitReader) ([]byte, error) {
 
 func (d *decoder29) parseVMFilter(buf []byte) (*filterBlock, error) {
 	flags := buf[0]
-	br := &rarBitReader{b: buf[1:]}
+	br := newRarBitReader(newBufByteReader(buf[1:]))
 	fb := new(filterBlock)
 
 	// Find the filter number which is an index into d.filters.
