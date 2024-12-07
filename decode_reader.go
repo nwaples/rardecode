@@ -57,9 +57,7 @@ func (d *decodeReader) init(r byteReader, ver int, size int, reset bool, unPacke
 	d.br = r
 
 	// initialize window
-	if size < minWindowSize {
-		size = minWindowSize
-	}
+	size = max(size, minWindowSize)
 	if size > len(d.win) {
 		b := make([]byte, size)
 		if reset {
@@ -72,9 +70,7 @@ func (d *decodeReader) init(r byteReader, ver int, size int, reset bool, unPacke
 		d.win = b
 		d.size = size
 	} else if reset {
-		for i := range d.win {
-			d.win[i] = 0
-		}
+		clear(d.win[:])
 		d.w = 0
 	}
 	d.r = d.w
@@ -279,9 +275,7 @@ func (d *decodeReader) bytes() ([]byte, error) {
 	}
 	if f.offset > 0 {
 		// filter not at current read index, output bytes before it
-		if f.offset < n {
-			n = f.offset
-		}
+		n = min(f.offset, n)
 		b := d.win[d.r : d.r+n]
 		d.r += n
 		f.offset -= n

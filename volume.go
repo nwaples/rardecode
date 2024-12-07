@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,8 +17,6 @@ import (
 const (
 	maxSfxSize = 0x100000 // maximum number of bytes to read when searching for RAR signature
 	sigPrefix  = "Rar!\x1A\x07"
-
-	maxInt = int(^uint(0) >> 1)
 )
 
 var (
@@ -148,9 +147,9 @@ func (v *volume) discard(n int64) error {
 		_, err = sr.Seek(n, io.SeekCurrent)
 		v.br.Reset(v.f)
 	} else {
-		for n > int64(maxInt) && err == nil {
-			_, err = v.br.Discard(maxInt)
-			n -= int64(maxInt)
+		for n > math.MaxInt && err == nil {
+			_, err = v.br.Discard(math.MaxInt)
+			n -= math.MaxInt
 		}
 		if err == nil && n > 0 {
 			_, err = v.br.Discard(int(n))

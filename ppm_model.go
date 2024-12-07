@@ -251,9 +251,7 @@ func (a *subAllocator) restart() {
 	a.heap2Lo = a.heap1Hi / unitSize * 2
 	a.heap2Hi = int32(len(a.states))
 	a.glueCount = 0
-	for i := range a.freeList {
-		a.freeList[i] = 0
-	}
+	clear(a.freeList[:])
 }
 
 // pushByte puts a byte on the heap and returns a state.succ index that
@@ -564,9 +562,7 @@ type model struct {
 }
 
 func (m *model) restart() {
-	for i := range m.charMask {
-		m.charMask[i] = 0
-	}
+	clear(m.charMask[:])
 	m.escCount = 1
 
 	if m.maxOrder < 12 {
@@ -900,9 +896,7 @@ func (m *model) update(minC, maxC context, s *state) context {
 
 	if m.escCount == 0 {
 		m.escCount = 1
-		for i := range m.charMask {
-			m.charMask[i] = 0
-		}
+		clear(m.charMask[:])
 	}
 
 	var ss *state // matching minC.suffix state

@@ -34,9 +34,7 @@ func (d *decoder20) init(r byteReader, reset bool, size int64, ver int) {
 		if d.audio != nil {
 			d.audio.reset()
 		}
-		for i := range d.codeLength {
-			d.codeLength[i] = 0
-		}
+		clear(d.codeLength[:])
 	}
 }
 
@@ -73,9 +71,10 @@ func readCodeLengthTable20(br *rarBitReader, table []byte) error {
 				return err
 			}
 			n += 3
-			for n > 0 && i < len(table) {
-				table[i] = table[i-1]
-				n--
+			n = min(i+n, len(table))
+			v := table[i-1]
+			for i < n {
+				table[i] = v
 				i++
 			}
 			continue
@@ -94,11 +93,9 @@ func readCodeLengthTable20(br *rarBitReader, table []byte) error {
 			}
 			n += 11
 		}
-		for n > 0 && i < len(table) {
-			table[i] = 0
-			n--
-			i++
-		}
+		n = min(i+n, len(table))
+		clear(table[i:n])
+		i = n
 	}
 	return nil
 }
@@ -114,9 +111,7 @@ func (d *decoder20) readBlockHeader() error {
 		return err
 	}
 	if n == 0 {
-		for i := range d.codeLength {
-			d.codeLength[i] = 0
-		}
+		clear(d.codeLength[:])
 	}
 	if d.isAudio {
 		if d.audio == nil {

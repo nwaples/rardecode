@@ -8,6 +8,7 @@ import (
 	"errors"
 	"hash"
 	"io"
+	"math"
 	"os"
 	"time"
 )
@@ -227,14 +228,9 @@ func (f *packedFileReader) bytes() ([]byte, error) {
 			return nil, err
 		}
 	}
-	n := maxInt
-	if f.n < int64(n) {
-		n = int(f.n)
-	}
+	n := int(min(f.n, math.MaxInt))
 	if k := f.v.br.Buffered(); k > 0 {
-		if k < n {
-			n = k
-		}
+		n = min(k, n)
 	} else {
 		b, err := f.v.peek(n)
 		if err != nil && err != bufio.ErrBufferFull {

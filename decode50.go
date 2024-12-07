@@ -56,13 +56,9 @@ func (d *decoder50) init(r byteReader, reset bool, size int64, ver int) {
 	}
 
 	if reset {
-		for i := range d.offset {
-			d.offset[i] = 0
-		}
+		clear(d.offset[:])
 		d.length = 0
-		for i := range d.codeLength {
-			d.codeLength[i] = 0
-		}
+		clear(d.codeLength[:])
 	}
 }
 

@@ -135,10 +135,8 @@ func (cr *cipherBlockReader) Read(p []byte) (int, error) {
 		cr.outbuf = b[n:]
 		return n, nil
 	}
-	if l < n {
-		// output buffer smaller than input
-		n = l
-	}
+	// output buffer smaller than input
+	n = min(l, n)
 	// round down to block size
 	n -= n % bs
 	cr.mode.CryptBlocks(p[:n], cr.inbuf[:n])
