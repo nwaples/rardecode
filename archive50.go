@@ -347,6 +347,7 @@ func (a *archive50) parseFilePrecisionTimeRecord(b *readBuf, f *fileBlockHeader)
 func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) {
 	f := new(fileBlockHeader)
 
+	f.HeaderEncrypted = a.blockKey != nil
 	f.first = h.flags&block5DataNotFirst == 0
 	f.last = h.flags&block5DataNotLast == 0
 
