@@ -238,6 +238,10 @@ func (f *packedFileReader) bytes() ([]byte, error) {
 			return nil, err
 		}
 		n = len(b)
+		if n == 0 {
+			//File is broken
+			return nil, io.ErrUnexpectedEOF
+		}
 	}
 	b, err := f.v.readSlice(n)
 	f.n -= int64(len(b))
