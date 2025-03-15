@@ -121,9 +121,9 @@ func newFileBlockReader(v *volume) (fileBlockReader, error) {
 	}
 	switch v.ver {
 	case 0:
-		return newArchive15(pass), nil
+		return newArchive15(v, pass)
 	case 1:
-		return newArchive50(pass), nil
+		return newArchive50(v, pass)
 	default:
 		return nil, ErrUnknownVersion
 	}

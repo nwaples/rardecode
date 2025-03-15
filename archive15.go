@@ -350,13 +350,23 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 	return f, nil
 }
 
+func (a *archive15) parseArcBlock(v *volume, h *blockHeader15) error {
+	a.encrypted = h.flags&arcEncrypted > 0
+	a.multi = h.flags&arcVolume > 0
+	if v.num == 0 {
+		v.old = h.flags&arcNewNaming == 0
+	}
+	a.solid = h.flags&arcSolid > 0
+	if a.encrypted && a.pass == nil {
+		return ErrArchiveEncrypted
+	}
+	return nil
+}
+
 // readBlockHeader returns the next block header in the archive.
 // It will return io.EOF if there were no bytes read.
 func (a *archive15) readBlockHeader(r sliceReader) (*blockHeader15, error) {
 	if a.encrypted {
-		if a.pass == nil {
-			return nil, ErrArchiveEncrypted
-		}
 		salt, err := r.readSlice(saltSize)
 		if err != nil {
 			return nil, err
@@ -424,42 +434,58 @@ func (a *archive15) readBlockHeader(r sliceReader) (*blockHeader15, error) {
 	return h, nil
 }
 
+func (a *archive15) readArcHeader(v *volume) error {
+	h, err := a.readBlockHeader(v)
+	if err != nil {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		return err
+	}
+	if h.htype != blockArc {
+		return ErrNoArchiveBlock
+	}
+	return a.parseArcBlock(v, h)
+}
+
 // next advances to the next file block in the archive
 func (a *archive15) next(v *volume) (*fileBlockHeader, error) {
 	for {
 		// could return an io.EOF here as 1.5 archives may not have an end block.
 		h, err := a.readBlockHeader(v)
 		if err != nil {
+			if err != io.EOF {
+				return nil, err
+			}
 			// if reached end of file without an end block try to open next volume
-			if err == io.EOF {
-				a.encrypted = false // reset encryption when opening new volume file
-				err = v.next()
-				if err == nil {
-					continue
-				}
+			a.encrypted = false // reset encryption when opening new volume file
+			err = v.next()
+			if err != nil {
 				// new volume doesnt exist, assume end of archive
 				if os.IsNotExist(err) {
 					return nil, io.EOF
 				}
+				return nil, err
 			}
-			return nil, err
+			err = a.readArcHeader(v)
+			if err != nil {
+				return nil, err
+			}
+			continue
 		}
 		switch h.htype {
 		case blockFile:
 			return a.parseFileHeader(h)
-		case blockArc:
-			a.encrypted = h.flags&arcEncrypted > 0
-			a.multi = h.flags&arcVolume > 0
-			if v.num == 0 {
-				v.old = h.flags&arcNewNaming == 0
-			}
-			a.solid = h.flags&arcSolid > 0
 		case blockEnd:
 			if h.flags&endArcNotLast == 0 || !a.multi {
 				return nil, io.EOF
 			}
 			a.encrypted = false // reset encryption when opening new volume file
 			err = v.next()
+			if err != nil {
+				return nil, err
+			}
+			err = a.readArcHeader(v)
 		default:
 			if h.dataSize > 0 {
 				err = v.discard(h.dataSize) // skip over block data
@@ -472,10 +498,10 @@ func (a *archive15) next(v *volume) (*fileBlockHeader, error) {
 }
 
 // newArchive15 creates a new fileBlockReader for a Version 1.5 archive
-func newArchive15(password *string) *archive15 {
+func newArchive15(v *volume, password *string) (*archive15, error) {
 	a := new(archive15)
 	if password != nil {
 		a.pass = utf16.Encode([]rune(*password)) // convert to UTF-16
 	}
-	return a
+	return a, a.readArcHeader(v)
 }

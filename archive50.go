@@ -78,6 +78,7 @@ var (
 	ErrPlatformIntSize      = errors.New("rardecode: platform integer size too small")
 	ErrDictionaryTooLarge   = errors.New("rardecode: decode dictionary too large")
 	ErrBadVolumeNumber      = errors.New("rardecode: bad volume number")
+	ErrNoArchiveBlock       = errors.New("rardecode: missing archive block")
 )
 
 type extra struct {
@@ -474,6 +475,16 @@ func (a *archive50) parseEncryptionBlock(b readBuf) error {
 	return nil
 }
 
+func (a *archive50) parseArcBlock(v *volume, h *blockHeader50) error {
+	flags := h.data.uvarint()
+	a.multi = flags&arc5MultiVol > 0
+	a.solid = flags&arc5Solid > 0
+	if flags&arc5VolNum > 0 && h.data.uvarint() != uint64(v.num) {
+		return ErrBadVolumeNumber
+	}
+	return nil
+}
+
 func (a *archive50) readBlockHeader(r sliceReader) (*blockHeader50, error) {
 	if a.blockKey != nil {
 		// block is encrypted
@@ -537,29 +548,49 @@ func (a *archive50) readBlockHeader(r sliceReader) (*blockHeader50, error) {
 	return h, nil
 }
 
+func (a *archive50) mustReadBlockHeader(r sliceReader) (*blockHeader50, error) {
+	h, err := a.readBlockHeader(r)
+	if err != nil {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		return nil, err
+	}
+	return h, nil
+}
+
+func (a *archive50) readArcHeaders(v *volume) error {
+	h, err := a.mustReadBlockHeader(v)
+	if err != nil {
+		return err
+	}
+	if h.htype == block5Encrypt {
+		err = a.parseEncryptionBlock(h.data)
+		if err != nil {
+			return err
+		}
+		h, err = a.mustReadBlockHeader(v)
+		if err != nil {
+			return err
+		}
+	}
+	if h.htype != block5Arc {
+		return ErrNoArchiveBlock
+	}
+	return a.parseArcBlock(v, h)
+}
+
 // next advances to the next file block in the archive
 func (a *archive50) next(v *volume) (*fileBlockHeader, error) {
 	for {
 		// get next block header
-		h, err := a.readBlockHeader(v)
+		h, err := a.mustReadBlockHeader(v)
 		if err != nil {
-			if err == io.EOF {
-				err = io.ErrUnexpectedEOF
-			}
 			return nil, err
 		}
 		switch h.htype {
 		case block5File:
 			return a.parseFileHeader(h)
-		case block5Arc:
-			flags := h.data.uvarint()
-			a.multi = flags&arc5MultiVol > 0
-			a.solid = flags&arc5Solid > 0
-			if flags&arc5VolNum > 0 && h.data.uvarint() != uint64(v.num) {
-				return nil, ErrBadVolumeNumber
-			}
-		case block5Encrypt:
-			err = a.parseEncryptionBlock(h.data)
 		case block5End:
 			flags := h.data.uvarint()
 			if flags&endArc5NotLast == 0 || !a.multi {
@@ -567,6 +598,10 @@ func (a *archive50) next(v *volume) (*fileBlockHeader, error) {
 			}
 			a.blockKey = nil // reset encryption when opening new volume file
 			err = v.next()
+			if err != nil {
+				return nil, err
+			}
+			err = a.readArcHeaders(v)
 		default:
 			if h.dataSize > 0 {
 				err = v.discard(h.dataSize) // skip over block data
@@ -579,10 +614,10 @@ func (a *archive50) next(v *volume) (*fileBlockHeader, error) {
 }
 
 // newArchive50 creates a new fileBlockReader for a Version 5 archive.
-func newArchive50(password *string) *archive50 {
+func newArchive50(v *volume, password *string) (*archive50, error) {
 	a := new(archive50)
 	if password != nil {
 		a.pass = []byte(*password)
 	}
-	return a
+	return a, a.readArcHeaders(v)
 }
