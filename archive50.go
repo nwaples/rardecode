@@ -35,6 +35,7 @@ const (
 
 	// main archive block flags
 	arc5MultiVol = 0x0001
+	arc5VolNum   = 0x0002
 	arc5Solid    = 0x0004
 
 	// file block flags
@@ -76,6 +77,7 @@ var (
 	ErrUnknownEncryptMethod = errors.New("rardecode: unknown encryption method")
 	ErrPlatformIntSize      = errors.New("rardecode: platform integer size too small")
 	ErrDictionaryTooLarge   = errors.New("rardecode: decode dictionary too large")
+	ErrBadVolumeNumber      = errors.New("rardecode: bad volume number")
 )
 
 type extra struct {
@@ -553,6 +555,9 @@ func (a *archive50) next(v *volume) (*fileBlockHeader, error) {
 			flags := h.data.uvarint()
 			a.multi = flags&arc5MultiVol > 0
 			a.solid = flags&arc5Solid > 0
+			if flags&arc5VolNum > 0 && h.data.uvarint() != uint64(v.num) {
+				return nil, ErrBadVolumeNumber
+			}
 		case block5Encrypt:
 			err = a.parseEncryptionBlock(h.data)
 		case block5End:
