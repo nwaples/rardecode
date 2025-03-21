@@ -24,7 +24,16 @@ var (
 	ErrVerMismatch      = errors.New("rardecode: volume version mistmatch")
 	ErrArchiveNameEmpty = errors.New("rardecode: archive name empty")
 	ErrFileNameRequired = errors.New("rardecode: filename required for multi volume archive")
+
+	defaultFS      = osFS{}
+	defaultBufSize = 4096
 )
+
+type osFS struct{}
+
+func (fs osFS) Open(name string) (fs.File, error) {
+	return os.Open(name)
+}
 
 type option struct {
 	bsize int     // size to be use for bufio.Reader
@@ -53,32 +62,36 @@ func Password(pass string) Option {
 // volume extends a fileBlockReader to be used across multiple
 // files in a multi-volume archive
 type volume struct {
-	f    io.Reader     // current file handle
-	br   *bufio.Reader // buffered reader for current volume file
-	dir  string        // current volume directory path
-	file string        // current volume file name
-	num  int           // volume number
-	old  bool          // uses old naming scheme
-	off  int64         // current file offset
-	ver  int           // archive file format version
-	opt  option        // optional settings
+	f     io.Reader     // current file handle
+	br    *bufio.Reader // buffered reader for current volume file
+	dir   string        // current volume directory path
+	file  string        // current volume file name
+	num   int           // volume number
+	old   bool          // uses old naming scheme
+	off   int64         // current file offset
+	ver   int           // archive file format version
+	bsize int           // size to be use for bufio.Reader
+	fs    fs.FS         // filesystem to use to open files
+	pass  *string       // password for encrypted volumes
 }
 
 func (v *volume) setOpts(opts []Option) {
+	opt := option{bsize: defaultBufSize, fs: defaultFS}
 	for _, f := range opts {
-		f(&v.opt)
+		f(&opt)
 	}
+	v.bsize = opt.bsize
+	v.fs = opt.fs
+	v.pass = opt.pass
 }
 
 func (v *volume) setBuffer() {
 	if v.br != nil {
 		v.br.Reset(v.f)
-	} else if size := v.opt.bsize; size > 0 {
-		v.br = bufio.NewReaderSize(v.f, size)
-	} else if br, ok := v.f.(*bufio.Reader); ok {
+	} else if br, ok := v.f.(*bufio.Reader); ok && br.Size() >= v.bsize {
 		v.br = br
 	} else {
-		v.br = bufio.NewReader(v.f)
+		v.br = bufio.NewReaderSize(v.f, v.bsize)
 	}
 }
 
@@ -89,11 +102,7 @@ func (v *volume) openFile(file string) error {
 	if len(file) == 0 {
 		return ErrArchiveNameEmpty
 	}
-	if fs := v.opt.fs; fs != nil {
-		f, err = fs.Open(v.dir + file)
-	} else {
-		f, err = os.Open(v.dir + file)
-	}
+	f, err = v.fs.Open(v.dir + file)
 	if err != nil {
 		return err
 	}

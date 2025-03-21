@@ -111,7 +111,7 @@ type fileBlockReader interface {
 }
 
 func newFileBlockReader(v *volume) (fileBlockReader, error) {
-	pass := v.opt.pass
+	pass := v.pass
 	if pass != nil {
 		runes := []rune(*pass)
 		if len(runes) > maxPassword {
