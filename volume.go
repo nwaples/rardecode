@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"math"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -35,28 +34,36 @@ func (fs osFS) Open(name string) (fs.File, error) {
 	return os.Open(name)
 }
 
-type option struct {
+type options struct {
 	bsize int     // size to be use for bufio.Reader
 	fs    fs.FS   // filesystem to use to open files
 	pass  *string // password for encrypted volumes
 }
 
 // An Option is used for optional archive extraction settings.
-type Option func(*option)
+type Option func(*options)
 
 // BufferSize sets the size of the bufio.Reader used in reading the archive.
 func BufferSize(size int) Option {
-	return func(o *option) { o.bsize = size }
+	return func(o *options) { o.bsize = size }
 }
 
 // FileSystem sets the fs.FS to be used for opening archive volumes.
 func FileSystem(fs fs.FS) Option {
-	return func(o *option) { o.fs = fs }
+	return func(o *options) { o.fs = fs }
 }
 
 // Password sets the password to use for decrypting archives.
 func Password(pass string) Option {
-	return func(o *option) { o.pass = &pass }
+	return func(o *options) { o.pass = &pass }
+}
+
+func getOptions(opts []Option) options {
+	opt := options{bsize: defaultBufSize, fs: defaultFS}
+	for _, f := range opts {
+		f(&opt)
+	}
+	return opt
 }
 
 // volume extends a fileBlockReader to be used across multiple
@@ -65,7 +72,7 @@ type volume struct {
 	f     io.Reader     // current file handle
 	br    *bufio.Reader // buffered reader for current volume file
 	dir   string        // current volume directory path
-	file  string        // current volume file name
+	files []string      // file names for each volume
 	num   int           // volume number
 	old   bool          // uses old naming scheme
 	off   int64         // current file offset
@@ -75,17 +82,8 @@ type volume struct {
 	pass  *string       // password for encrypted volumes
 }
 
-func (v *volume) setOpts(opts []Option) {
-	opt := option{bsize: defaultBufSize, fs: defaultFS}
-	for _, f := range opts {
-		f(&opt)
-	}
-	v.bsize = opt.bsize
-	v.fs = opt.fs
-	v.pass = opt.pass
-}
-
-func (v *volume) setBuffer() {
+func (v *volume) setReader(r io.Reader) {
+	v.f = r
 	if v.br != nil {
 		v.br.Reset(v.f)
 	} else if br, ok := v.f.(*bufio.Reader); ok && br.Size() >= v.bsize {
@@ -95,25 +93,17 @@ func (v *volume) setBuffer() {
 	}
 }
 
-func (v *volume) openFile(file string) error {
-	var err error
-	var f io.Reader
-
-	if len(file) == 0 {
-		return ErrArchiveNameEmpty
-	}
-	f, err = v.fs.Open(v.dir + file)
+func (v *volume) openVolume(n int) error {
+	f, err := v.fs.Open(v.dir + v.files[n])
 	if err != nil {
 		return err
 	}
-	v.f = f
-	v.file = file
-	v.setBuffer()
+	v.setReader(f)
 	return nil
 }
 
 func (v *volume) init() error {
-	err := v.openFile(v.file)
+	err := v.openVolume(v.num)
 	if err != nil {
 		return err
 	}
@@ -134,8 +124,8 @@ func (v *volume) clone() *volume {
 
 func (v *volume) Close() error {
 	// v.f may be nil if os.Open fails in next().
-	// We only close if we opened it (ie. v.name provided).
-	if v.f != nil && len(v.file) > 0 {
+	// We only close if we opened it (ie. name in v.files).
+	if v.f != nil && len(v.files) > 0 {
 		if c, ok := v.f.(io.Closer); ok {
 			err := c.Close()
 			v.f = nil // set to nil so we can only close v.f once
@@ -329,10 +319,28 @@ func hasDigits(s string) bool {
 	return false
 }
 
+func (v *volume) openFile(file string) error {
+	f, err := v.fs.Open(v.dir + file)
+	if err != nil {
+		return err
+	}
+	v.setReader(f)
+	if v.num == len(v.files) {
+		v.files = append(v.files, file)
+	}
+	return nil
+}
+
 // openNextFile opens the next volume file in the archive.
 func (v *volume) openNextFile() error {
-	file := v.file
-	if v.num == 0 {
+	v.num++
+	// check for cached volume name
+	if v.num < len(v.files) {
+		return v.openVolume(v.num)
+	}
+
+	file := v.files[v.num-1]
+	if v.num == 1 {
 		// check file extensions
 		i := strings.LastIndex(file, ".")
 		if i < 0 {
@@ -373,7 +381,7 @@ func (v *volume) openNextFile() error {
 }
 
 func (v *volume) next() error {
-	if len(v.file) == 0 {
+	if len(v.files) == 0 {
 		return ErrFileNameRequired
 	}
 	err := v.Close()
@@ -382,7 +390,6 @@ func (v *volume) next() error {
 	}
 	v.f = nil
 	err = v.openNextFile() // Open next volume file
-	v.num++
 	if err != nil {
 		return err
 	}
@@ -393,25 +400,11 @@ func (v *volume) next() error {
 	return err
 }
 
-func newVolume(r io.Reader, opts []Option) (*volume, error) {
-	v := &volume{f: r}
-	v.setOpts(opts)
-	v.setBuffer()
-	return v, v.findSig()
-}
-
-func openVolume(name string, opts []Option) (*volume, error) {
+func newVolume(r io.Reader, options options) (*volume, error) {
 	v := &volume{}
-	v.dir, v.file = filepath.Split(name)
-	v.setOpts(opts)
-	err := v.openFile(v.file)
-	if err != nil {
-		return nil, err
-	}
-	err = v.findSig()
-	if err != nil {
-		_ = v.Close()
-		return nil, err
-	}
-	return v, nil
+	v.bsize = options.bsize
+	v.fs = options.fs
+	v.pass = options.pass
+	v.setReader(r)
+	return v, v.findSig()
 }

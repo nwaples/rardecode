@@ -8,6 +8,7 @@ import (
 	"hash"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -242,20 +243,8 @@ func (f *packedFileReader) bytes() ([]byte, error) {
 	return b, err
 }
 
-func newPackedFileReader(r io.Reader, opts []Option) (*packedFileReader, error) {
-	v, err := newVolume(r, opts)
-	if err != nil {
-		return nil, err
-	}
-	fbr, err := newFileBlockReader(v)
-	if err != nil {
-		return nil, err
-	}
-	return &packedFileReader{r: fbr, v: v}, nil
-}
-
-func openPackedFileReader(name string, opts []Option) (*packedFileReader, error) {
-	v, err := openVolume(name, opts)
+func newPackedFileReader(r io.Reader, options options) (*packedFileReader, error) {
+	v, err := newVolume(r, options)
 	if err != nil {
 		return nil, err
 	}
@@ -460,7 +449,8 @@ func (r *Reader) nextFile() error {
 // NewReader only supports single volume archives.
 // Multi-volume archives must use OpenReader.
 func NewReader(r io.Reader, opts ...Option) (*Reader, error) {
-	pr, err := newPackedFileReader(r, opts)
+	options := getOptions(opts)
+	pr, err := newPackedFileReader(r, options)
 	if err != nil {
 		return nil, err
 	}
@@ -479,10 +469,20 @@ func (rc *ReadCloser) Close() error {
 
 // OpenReader opens a RAR archive specified by the name and returns a ReadCloser.
 func OpenReader(name string, opts ...Option) (*ReadCloser, error) {
-	pr, err := openPackedFileReader(name, opts)
+	options := getOptions(opts)
+	f, err := options.fs.Open(name)
 	if err != nil {
 		return nil, err
 	}
+	pr, err := newPackedFileReader(f, options)
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	v := pr.v
+	dir, file := filepath.Split(name)
+	v.dir = dir
+	v.files = []string{file}
 	return &ReadCloser{Reader{pr: pr}}, nil
 }
 
