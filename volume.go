@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"math"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -119,6 +120,7 @@ func (v *volume) clone() *volume {
 	*nv = *v
 	nv.f = nil
 	nv.br = nil
+	nv.files = slices.Clone(nv.files)
 	return nv
 }
 
