@@ -505,7 +505,12 @@ func (f *File) Open() (io.ReadCloser, error) {
 	}
 	r := new(ReadCloser)
 	r.pr = f.pr.clone()
-	return r, r.pr.init()
+	err := r.pr.init()
+	if err != nil {
+		r.Close()
+		return nil, err
+	}
+	return r, nil
 }
 
 // List returns a list of File's in the RAR archive specified by name.
