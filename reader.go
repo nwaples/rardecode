@@ -248,7 +248,15 @@ func newPackedFileReader(r io.Reader, options options) (*packedFileReader, error
 	if err != nil {
 		return nil, err
 	}
-	fbr, err := newFileBlockReader(v)
+	var fbr fileBlockReader
+	switch v.ver {
+	case 0:
+		fbr, err = newArchive15(v, options.pass)
+	case 1:
+		fbr, err = newArchive50(v, options.pass)
+	default:
+		err = ErrUnknownVersion
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -64,6 +64,14 @@ func getOptions(opts []Option) options {
 	for _, f := range opts {
 		f(&opt)
 	}
+	// truncate password
+	if opt.pass != nil {
+		runes := []rune(*opt.pass)
+		if len(runes) > maxPassword {
+			pw := string(runes[:maxPassword])
+			opt.pass = &pw
+		}
+	}
 	return opt
 }
 
@@ -80,7 +88,6 @@ type volume struct {
 	ver   int           // archive file format version
 	bsize int           // size to be use for bufio.Reader
 	fs    fs.FS         // filesystem to use to open files
-	pass  *string       // password for encrypted volumes
 }
 
 func (v *volume) reset(r io.Reader, volnum int) error {
@@ -391,7 +398,6 @@ func newVolume(r io.Reader, options options) (*volume, error) {
 	v := &volume{}
 	v.bsize = options.bsize
 	v.fs = options.fs
-	v.pass = options.pass
 	err := v.reset(r, 0)
 	if err != nil {
 		_ = v.Close()

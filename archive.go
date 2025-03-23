@@ -109,22 +109,3 @@ type fileBlockReader interface {
 	next(v *volume) (*fileBlockHeader, error) // reads the volume and returns the next fileBlockHeader
 	clone() fileBlockReader                   // makes a copy of the fileBlockReader
 }
-
-func newFileBlockReader(v *volume) (fileBlockReader, error) {
-	pass := v.pass
-	if pass != nil {
-		runes := []rune(*pass)
-		if len(runes) > maxPassword {
-			pw := string(runes[:maxPassword])
-			pass = &pw
-		}
-	}
-	switch v.ver {
-	case 0:
-		return newArchive15(v, pass)
-	case 1:
-		return newArchive50(v, pass)
-	default:
-		return nil, ErrUnknownVersion
-	}
-}
