@@ -83,8 +83,10 @@ type volume struct {
 	pass  *string       // password for encrypted volumes
 }
 
-func (v *volume) setReader(r io.Reader) {
+func (v *volume) reset(r io.Reader, volnum int) error {
 	v.f = r
+	v.num = volnum
+	v.off = 0
 	if v.br != nil {
 		v.br.Reset(v.f)
 	} else if br, ok := v.f.(*bufio.Reader); ok && br.Size() >= v.bsize {
@@ -92,27 +94,32 @@ func (v *volume) setReader(r io.Reader) {
 	} else {
 		v.br = bufio.NewReaderSize(v.f, v.bsize)
 	}
+	return v.findSig()
 }
 
-func (v *volume) openVolume(n int) error {
-	f, err := v.fs.Open(v.dir + v.files[n])
+func (v *volume) openFile(file string, volnum int) error {
+	f, err := v.fs.Open(v.dir + file)
 	if err != nil {
 		return err
 	}
-	v.setReader(f)
+	if volnum == len(v.files) {
+		v.files = append(v.files, file)
+	}
+	err = v.reset(f, volnum)
+	if err != nil {
+		_ = v.Close()
+		return err
+	}
 	return nil
 }
 
 func (v *volume) init() error {
-	err := v.openVolume(v.num)
+	off := v.off
+	err := v.openFile(v.files[v.num], v.num)
 	if err != nil {
 		return err
 	}
-	err = v.discard(v.off)
-	if err != nil {
-		_ = v.Close()
-	}
-	return err
+	return v.discard(off - v.off)
 }
 
 func (v *volume) clone() *volume {
@@ -321,67 +328,22 @@ func hasDigits(s string) bool {
 	return false
 }
 
-func (v *volume) openFile(file string) error {
-	f, err := v.fs.Open(v.dir + file)
-	if err != nil {
-		return err
+func fixFileExtension(file string) string {
+	// check file extensions
+	i := strings.LastIndex(file, ".")
+	if i < 0 {
+		// no file extension, add one
+		return file + ".rar"
 	}
-	v.setReader(f)
-	if v.num == len(v.files) {
-		v.files = append(v.files, file)
+	ext := strings.ToLower(file[i+1:])
+	// replace with .rar for empty extensions & self extracting archives
+	if ext == "" || ext == "exe" || ext == "sfx" {
+		file = file[:i+1] + "rar"
 	}
-	return nil
+	return file
 }
 
-// openNextFile opens the next volume file in the archive.
-func (v *volume) openNextFile() error {
-	v.num++
-	// check for cached volume name
-	if v.num < len(v.files) {
-		return v.openVolume(v.num)
-	}
-
-	file := v.files[v.num-1]
-	if v.num == 1 {
-		// check file extensions
-		i := strings.LastIndex(file, ".")
-		if i < 0 {
-			// no file extension, add one
-			file += ".rar"
-		} else {
-			ext := strings.ToLower(file[i+1:])
-			// replace with .rar for empty extensions & self extracting archives
-			if ext == "" || ext == "exe" || ext == "sfx" {
-				file = file[:i+1] + "rar"
-			}
-		}
-		// new naming scheme must have volume number in filename
-		if !v.old {
-			if hasDigits(file) {
-				// found digits, try using new naming scheme
-				err := v.openFile(nextNewVolName(file))
-				if err != nil && os.IsNotExist(err) {
-					// file didn't exist, try old naming scheme
-					oldErr := v.openFile(nextOldVolName(file))
-					if oldErr == nil || !os.IsNotExist(err) {
-						v.old = true
-						return oldErr
-					}
-				}
-				return err
-			}
-			// no digits in filename, use old naming
-			v.old = true
-		}
-	}
-	if v.old {
-		file = nextOldVolName(file)
-	} else {
-		file = nextNewVolName(file)
-	}
-	return v.openFile(file)
-}
-
+// next opens the next volume file in the archive.
 func (v *volume) next() error {
 	if len(v.files) == 0 {
 		return ErrFileNameRequired
@@ -390,16 +352,39 @@ func (v *volume) next() error {
 	if err != nil {
 		return err
 	}
-	v.f = nil
-	err = v.openNextFile() // Open next volume file
-	if err != nil {
-		return err
+
+	nextVolNum := v.num + 1
+	// check for cached volume name
+	if nextVolNum < len(v.files) {
+		return v.openFile(v.files[nextVolNum], nextVolNum)
 	}
-	err = v.findSig()
-	if err != nil {
-		_ = v.Close()
+
+	file := v.files[v.num]
+	if nextVolNum == 1 {
+		file = fixFileExtension(file)
+		// new naming scheme must have volume number in filename
+		if !v.old && hasDigits(file) {
+			// found digits, try using new naming scheme
+			err = v.openFile(nextNewVolName(file), nextVolNum)
+			if err == nil || !os.IsNotExist(err) {
+				return err
+			}
+			// file didn't exist, try old naming scheme
+			oldErr := v.openFile(nextOldVolName(file), nextVolNum)
+			if oldErr == nil || !os.IsNotExist(err) {
+				v.old = true
+				return oldErr
+			}
+			return err
+		}
+		v.old = true
 	}
-	return err
+	if v.old {
+		file = nextOldVolName(file)
+	} else {
+		file = nextNewVolName(file)
+	}
+	return v.openFile(file, nextVolNum)
 }
 
 func newVolume(r io.Reader, options options) (*volume, error) {
@@ -407,6 +392,9 @@ func newVolume(r io.Reader, options options) (*volume, error) {
 	v.bsize = options.bsize
 	v.fs = options.fs
 	v.pass = options.pass
-	v.setReader(r)
-	return v, v.findSig()
+	err := v.reset(r, 0)
+	if err != nil {
+		_ = v.Close()
+	}
+	return v, nil
 }
