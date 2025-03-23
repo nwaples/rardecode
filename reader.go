@@ -470,6 +470,9 @@ func (rc *ReadCloser) Close() error {
 // OpenReader opens a RAR archive specified by the name and returns a ReadCloser.
 func OpenReader(name string, opts ...Option) (*ReadCloser, error) {
 	options := getOptions(opts)
+	if options.fs == nil {
+		options.fs = defaultFS
+	}
 	f, err := options.fs.Open(name)
 	if err != nil {
 		return nil, err

@@ -60,7 +60,7 @@ func Password(pass string) Option {
 }
 
 func getOptions(opts []Option) options {
-	opt := options{bsize: defaultBufSize, fs: defaultFS}
+	opt := options{bsize: defaultBufSize}
 	for _, f := range opts {
 		f(&opt)
 	}
