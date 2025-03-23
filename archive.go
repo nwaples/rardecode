@@ -11,6 +11,9 @@ const (
 	decode29Ver
 	decode50Ver
 	decode70Ver
+
+	archiveVersion15 = 0
+	archiveVersion50 = 1
 )
 
 var (

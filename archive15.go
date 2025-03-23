@@ -486,13 +486,16 @@ func (a *archive15) next(v *volume) (*fileBlockHeader, error) {
 				return nil, err
 			}
 			err = a.readArcHeader(v)
+			if err != nil {
+				return nil, err
+			}
 		default:
 			if h.dataSize > 0 {
 				err = v.discard(h.dataSize) // skip over block data
+				if err != nil {
+					return nil, err
+				}
 			}
-		}
-		if err != nil {
-			return nil, err
 		}
 	}
 }

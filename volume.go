@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"math"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -39,6 +40,7 @@ type options struct {
 	bsize int     // size to be use for bufio.Reader
 	fs    fs.FS   // filesystem to use to open files
 	pass  *string // password for encrypted volumes
+	file  string  // filename for volume
 }
 
 // An Option is used for optional archive extraction settings.
@@ -86,22 +88,7 @@ type volume struct {
 	old   bool          // uses old naming scheme
 	off   int64         // current file offset
 	ver   int           // archive file format version
-	bsize int           // size to be use for bufio.Reader
 	fs    fs.FS         // filesystem to use to open files
-}
-
-func (v *volume) reset(r io.Reader, volnum int) error {
-	v.f = r
-	v.num = volnum
-	v.off = 0
-	if v.br != nil {
-		v.br.Reset(v.f)
-	} else if br, ok := v.f.(*bufio.Reader); ok && br.Size() >= v.bsize {
-		v.br = br
-	} else {
-		v.br = bufio.NewReaderSize(v.f, v.bsize)
-	}
-	return v.findSig()
 }
 
 func (v *volume) openFile(file string, volnum int) error {
@@ -109,13 +96,20 @@ func (v *volume) openFile(file string, volnum int) error {
 	if err != nil {
 		return err
 	}
+	v.f = f
+	v.num = volnum
+	v.off = 0
+	v.br.Reset(v.f)
 	if volnum == len(v.files) {
 		v.files = append(v.files, file)
 	}
-	err = v.reset(f, volnum)
+	version, err := v.findSig()
 	if err != nil {
 		_ = v.Close()
 		return err
+	}
+	if version != v.ver {
+		return ErrVerMismatch
 	}
 	return nil
 }
@@ -133,7 +127,7 @@ func (v *volume) clone() *volume {
 	nv := new(volume)
 	*nv = *v
 	nv.f = nil
-	nv.br = nil
+	nv.br = bufio.NewReaderSize(bytes.NewReader(nil), nv.br.Size())
 	nv.files = slices.Clone(nv.files)
 	return nv
 }
@@ -214,7 +208,7 @@ func (v *volume) Read(p []byte) (int, error) {
 
 // findSig searches for the RAR signature and version at the beginning of a file.
 // It searches no more than maxSfxSize bytes.
-func (v *volume) findSig() error {
+func (v *volume) findSig() (int, error) {
 	v.off = 0
 	for v.off <= maxSfxSize {
 		b, err := v.br.ReadSlice(sigPrefix[0])
@@ -225,7 +219,7 @@ func (v *volume) findSig() error {
 			if err == io.EOF {
 				err = ErrNoSig
 			}
-			return err
+			return 0, err
 		}
 
 		b, err = v.br.Peek(len(sigPrefix[1:]) + 2)
@@ -233,7 +227,7 @@ func (v *volume) findSig() error {
 			if err == io.EOF {
 				err = ErrNoSig
 			}
-			return err
+			return 0, err
 		}
 		if !bytes.HasPrefix(b, []byte(sigPrefix[1:])) {
 			continue
@@ -245,15 +239,13 @@ func (v *volume) findSig() error {
 			continue
 		}
 		b, err = v.br.ReadSlice('\x00')
-		v.off += int64(len(b))
-		if v.num == 0 {
-			v.ver = ver
-		} else if v.ver != ver {
-			return ErrVerMismatch
+		if err != nil {
+			return 0, err
 		}
-		return err
+		v.off += int64(len(b))
+		return ver, nil
 	}
-	return ErrNoSig
+	return 0, ErrNoSig
 }
 
 func nextNewVolName(file string) string {
@@ -395,10 +387,18 @@ func (v *volume) next() error {
 }
 
 func newVolume(r io.Reader, options options) (*volume, error) {
-	v := &volume{}
-	v.bsize = options.bsize
-	v.fs = options.fs
-	err := v.reset(r, 0)
+	v := &volume{
+		f:  r,
+		br: bufio.NewReaderSize(r, options.bsize),
+		fs: options.fs,
+	}
+	if options.file != "" {
+		dir, file := filepath.Split(options.file)
+		v.dir = dir
+		v.files = []string{file}
+	}
+	var err error
+	v.ver, err = v.findSig()
 	if err != nil {
 		_ = v.Close()
 		return nil, err
