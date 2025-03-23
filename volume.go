@@ -401,6 +401,7 @@ func newVolume(r io.Reader, options options) (*volume, error) {
 	err := v.reset(r, 0)
 	if err != nil {
 		_ = v.Close()
+		return nil, err
 	}
 	return v, nil
 }
