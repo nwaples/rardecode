@@ -206,6 +206,12 @@ func (v *volume) Read(p []byte) (int, error) {
 	return n, err
 }
 
+func (v *volume) ReadByte() (byte, error) {
+	b, err := v.br.ReadByte()
+	v.off++
+	return b, err
+}
+
 // findSig searches for the RAR signature and version at the beginning of a file.
 // It searches no more than maxSfxSize bytes.
 func (v *volume) findSig() (int, error) {
