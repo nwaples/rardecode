@@ -97,33 +97,7 @@ func (f *FileHeader) Mode() os.FileMode {
 
 type byteReader interface {
 	io.Reader
-	bytes() ([]byte, error)
-}
-
-type bufByteReader struct {
-	buf []byte
-}
-
-func (b *bufByteReader) Read(p []byte) (int, error) {
-	if len(b.buf) == 0 {
-		return 0, io.EOF
-	}
-	n := copy(p, b.buf)
-	b.buf = b.buf[n:]
-	return n, nil
-}
-
-func (b *bufByteReader) bytes() ([]byte, error) {
-	if len(b.buf) == 0 {
-		return nil, io.EOF
-	}
-	buf := b.buf
-	b.buf = nil
-	return buf, nil
-}
-
-func newBufByteReader(buf []byte) *bufByteReader {
-	return &bufByteReader{buf: buf}
+	io.ByteReader
 }
 
 // packedFileReader provides sequential access to packed files in a RAR archive.
@@ -221,25 +195,21 @@ func (f *packedFileReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (f *packedFileReader) bytes() ([]byte, error) {
+func (f *packedFileReader) ReadByte() (byte, error) {
 	for f.n == 0 {
 		if err := f.nextBlock(); err != nil {
-			return nil, err
+			return 0, err
 		}
 	}
-	n := int(min(f.n, int64(f.v.br.Size())))
-	if k := f.v.br.Buffered(); k > 0 {
-		n = min(k, n)
-	} else {
-		b, err := f.v.peek(n)
-		if err != nil {
-			return nil, err
+	b, err := f.v.ReadByte()
+	if err != nil {
+		if err == io.EOF && f.n > 0 {
+			return 0, io.ErrUnexpectedEOF
 		}
-		n = len(b)
+		return 0, err
 	}
-	b, err := f.v.readSlice(n)
-	f.n -= int64(len(b))
-	return b, err
+	f.n--
+	return b, nil
 }
 
 func newPackedFileReader(v *volume, pass *string) (*packedFileReader, error) {
@@ -280,13 +250,19 @@ func (l *limitedReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (l *limitedReader) bytes() ([]byte, error) {
-	b, err := l.r.bytes()
-	if n := len(b); int64(n) > l.n {
-		b = b[:int(l.n)]
+func (l *limitedReader) ReadByte() (byte, error) {
+	if l.n <= 0 {
+		return 0, io.EOF
 	}
-	l.n -= int64(len(b))
-	return b, err
+	b, err := l.r.ReadByte()
+	if err != nil {
+		if err == io.EOF && l.n > 0 {
+			return 0, l.shortErr
+		}
+		return 0, err
+	}
+	l.n--
+	return b, nil
 }
 
 type checksumReader struct {
@@ -335,17 +311,19 @@ func (cr *checksumReader) Read(p []byte) (int, error) {
 	return n, cr.eofError()
 }
 
-func (cr *checksumReader) bytes() ([]byte, error) {
-	b, err := cr.r.bytes()
-	if len(b) > 0 {
-		if _, err = cr.hash.Write(b); err != nil {
-			return b, err
+func (cr *checksumReader) ReadByte() (byte, error) {
+	b, err := cr.r.ReadByte()
+	if err != nil {
+		if err != io.EOF {
+			return 0, err
 		}
+		return 0, cr.eofError()
 	}
-	if err != io.EOF {
-		return b, err
+	_, err = cr.hash.Write([]byte{b})
+	if err != nil {
+		return 0, err
 	}
-	return b, cr.eofError()
+	return b, err
 }
 
 // Reader provides sequential access to files in a RAR archive.
@@ -366,6 +344,17 @@ func (r *Reader) Read(p []byte) (int, error) {
 	return r.r.Read(p)
 }
 
+// ReadByte reads and returns a single byte.
+func (r *Reader) ReadByte() (byte, error) {
+	if r.r == nil {
+		err := r.nextFile()
+		if err != nil {
+			return 0, err
+		}
+	}
+	return r.r.ReadByte()
+}
+
 // WriteTo implements io.WriterTo.
 func (r *Reader) WriteTo(w io.Writer) (int64, error) {
 	if r.r == nil {
@@ -374,20 +363,10 @@ func (r *Reader) WriteTo(w io.Writer) (int64, error) {
 			return 0, err
 		}
 	}
-	var n int64
-	b, err := r.r.bytes()
-	for err == nil {
-		var nn int
-		nn, err = w.Write(b)
-		n += int64(nn)
-		if err == nil {
-			b, err = r.r.bytes()
-		}
+	if wr, ok := r.r.(io.WriterTo); ok {
+		return wr.WriteTo(w)
 	}
-	if err == io.EOF {
-		err = nil
-	}
-	return n, err
+	return io.Copy(w, r.r)
 }
 
 // Next advances to the next file in the archive.
@@ -398,12 +377,13 @@ func (r *Reader) Next() (*FileHeader, error) {
 		if r.r == nil {
 			// setup full file reader
 			err = r.nextFile()
+			if err != nil {
+				return nil, err
+			}
 		}
 		// decode and discard bytes
-		for err == nil {
-			_, err = r.dr.bytes()
-		}
-		if err != io.EOF {
+		_, err = io.Copy(io.Discard, r.dr)
+		if err != nil {
 			return nil, err
 		}
 	}
