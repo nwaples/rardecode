@@ -468,11 +468,19 @@ func NewReader(r io.Reader, opts ...Option) (*Reader, error) {
 // ReadCloser is a Reader that allows closing of the rar archive.
 type ReadCloser struct {
 	Reader
+	v *volume
 }
 
 // Close closes the rar file.
 func (rc *ReadCloser) Close() error {
 	return rc.pr.Close()
+}
+
+// Volumes returns the volume filenames that have been used in decoding the archive
+// up to this point. This will include the current open volume if the archive is still
+// being processed.
+func (rc *ReadCloser) Volumes() []string {
+	return rc.v.files
 }
 
 // OpenReader opens a RAR archive specified by the name and returns a ReadCloser.
@@ -497,7 +505,7 @@ func OpenReader(name string, opts ...Option) (*ReadCloser, error) {
 		return nil, err
 	}
 
-	return &ReadCloser{Reader{pr: pr}}, nil
+	return &ReadCloser{Reader: Reader{pr: pr}, v: v}, nil
 }
 
 // File represents a file in a RAR archive
