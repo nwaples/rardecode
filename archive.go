@@ -76,19 +76,6 @@ func (b *readBuf) uvarint() uint64 {
 	return 0
 }
 
-// sliceReader implements the readSlice and peek functions.
-// The slices returned are only valid till the next readSlice or peek call.
-// If n bytes arent available no slice will be returned with the error value set.
-// The error is io.EOF only of 0 bytes were found, otherwise io.ErrUnexpectedEOF
-// will be returned on a short read.
-// The capacity of the slice returned by readSlice must reflect how much data was read
-// to return the n bytes (eg. an encrypted reader has to decrypt in multiples of a
-// block size so may need to read more than n bytes).
-type sliceReader interface {
-	readSlice(n int) ([]byte, error) // return the next n bytes
-	peek(n int) ([]byte, error)      // return the next n bytes withough advancing reader
-}
-
 // fileBlockHeader represents a file block in a RAR archive.
 // Files may comprise one or more file blocks.
 // Solid files retain decode tables and dictionary from previous solid files in the archive.
@@ -105,6 +92,16 @@ type fileBlockHeader struct {
 	iv       []byte           // iv for AES, non-empty if file encrypted
 	genKeys  func() error     // generates key & iv fields
 	FileHeader
+}
+
+func (f *fileBlockHeader) getKeys() (key, iv []byte, err error) {
+	if f.key == nil {
+		err := f.genKeys()
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return f.key, f.iv, nil
 }
 
 // fileBlockReader returns the next fileBlockHeader in a volume.

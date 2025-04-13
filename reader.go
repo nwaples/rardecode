@@ -406,7 +406,7 @@ func (r *Reader) nextFile() error {
 	r.r = r.pr
 	// check for encryption
 	if h.genKeys != nil {
-		r.r = newAesDecryptReader(r.pr, h) // decrypt
+		r.r = newAesDecryptReader(r.pr, h.getKeys) // decrypt
 	}
 	// check for compression
 	if h.decVer > 0 {
