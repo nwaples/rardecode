@@ -189,9 +189,11 @@ func newCipherBlockReader(r byteReader, getMode func() (cipher.BlockMode, error)
 // newAesDecryptReader returns a cipherBlockReader that decrypts input from a given io.Reader using AES.
 func newAesDecryptReader(r byteReader, h *fileBlockHeader) *cipherBlockReader {
 	getMode := func() (cipher.BlockMode, error) {
-		err := h.genKeys()
-		if err != nil {
-			return nil, err
+		if h.key == nil {
+			err := h.genKeys()
+			if err != nil {
+				return nil, err
+			}
 		}
 		block, err := aes.NewCipher(h.key)
 		if err != nil {
