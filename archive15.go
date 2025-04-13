@@ -365,25 +365,25 @@ func (a *archive15) parseArcBlock(v *volume, h *blockHeader15) error {
 
 // readBlockHeader returns the next block header in the archive.
 // It will return io.EOF if there were no bytes read.
-func (a *archive15) readBlockHeader(r sliceReader) (*blockHeader15, error) {
+func (a *archive15) readBlockHeader(r byteReader) (*blockHeader15, error) {
 	if a.encrypted {
-		salt, err := r.readSlice(saltSize)
+		salt := make([]byte, saltSize)
+		_, err := io.ReadFull(r, salt)
 		if err != nil {
 			return nil, err
 		}
 		key, iv := a.getKeys(salt)
-		r = newAesSliceReader(r, key, iv)
+		r = newAesDecryptReader(r, func() ([]byte, []byte, error) { return key, iv, nil })
 	}
-	var b readBuf
-	var err error
-	// peek to find the header size
-	b, err = r.peek(7)
+	sizeBuf := make([]byte, 7)
+	_, err := io.ReadFull(r, sizeBuf)
 	if err != nil {
 		if err == io.EOF && a.encrypted {
 			err = io.ErrUnexpectedEOF
 		}
 		return nil, err
 	}
+	b := readBuf(sizeBuf)
 	crc := b.uint16()
 	h := new(blockHeader15)
 	h.htype = b.byte()
@@ -398,7 +398,10 @@ func (a *archive15) readBlockHeader(r sliceReader) (*blockHeader15, error) {
 	} else if size < 7 {
 		return nil, ErrCorruptBlockHeader
 	}
-	h.data, err = r.readSlice(size)
+
+	h.data = make([]byte, size)
+	copy(h.data, sizeBuf)
+	_, err = io.ReadFull(r, h.data[7:])
 	if err != nil {
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF

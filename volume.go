@@ -170,36 +170,6 @@ func (v *volume) discard(n int64) error {
 	return err
 }
 
-func (v *volume) peek(n int) ([]byte, error) {
-	b, err := v.br.Peek(n)
-	if err == io.EOF && len(b) > 0 {
-		err = io.ErrUnexpectedEOF
-	}
-	return b, err
-}
-
-func (v *volume) readSlice(n int) ([]byte, error) {
-	if n <= v.br.Size() {
-		b, err := v.br.Peek(n)
-		if err != nil {
-			if err == io.EOF && len(b) > 0 {
-				err = io.ErrUnexpectedEOF
-			}
-			return nil, err
-		}
-		n, err = v.br.Discard(n)
-		v.off += int64(n)
-		return b[:n:n], err
-	}
-	// bufio.Reader buffer is too small, create a new slice and copy to it
-	b := make([]byte, n)
-	if _, err := io.ReadFull(v.br, b); err != nil {
-		return nil, err
-	}
-	v.off += int64(n)
-	return b, nil
-}
-
 func (v *volume) Read(p []byte) (int, error) {
 	n, err := v.br.Read(p)
 	v.off += int64(n)

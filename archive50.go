@@ -485,39 +485,41 @@ func (a *archive50) parseArcBlock(v *volume, h *blockHeader50) error {
 	return nil
 }
 
-func (a *archive50) readBlockHeader(r sliceReader) (*blockHeader50, error) {
+func (a *archive50) readBlockHeader(r byteReader) (*blockHeader50, error) {
 	if a.blockKey != nil {
 		// block is encrypted
-		iv, err := r.readSlice(16)
+		iv := make([]byte, 16)
+		_, err := io.ReadFull(r, iv)
 		if err != nil {
 			return nil, err
 		}
-		r = newAesSliceReader(r, a.blockKey, iv)
+		r = newAesDecryptReader(r, func() ([]byte, []byte, error) { return a.blockKey, iv, nil })
 	}
-	var b readBuf
-	var err error
-	// peek to find the header size
-	b, err = r.peek(7)
+	// find the header size
+	sizeBuf := make([]byte, 7)
+	_, err := io.ReadFull(r, sizeBuf)
 	if err != nil {
 		return nil, err
 	}
+	b := readBuf(sizeBuf)
 	crc := b.uint32()
-
-	hash := crc32.NewIEEE()
-
 	size := int(b.uvarint()) // header size
-	b, err = r.readSlice(7 - len(b) + size)
+
+	buf := make([]byte, 3+size-len(b))
+	copy(buf, sizeBuf[4:])
+	_, err = io.ReadFull(r, buf[3:])
 	if err != nil {
 		return nil, err
 	}
 
 	// check header crc
-	_, _ = hash.Write(b[4:])
+	hash := crc32.NewIEEE()
+	_, _ = hash.Write(buf)
 	if crc != hash.Sum32() {
 		return nil, ErrBadHeaderCRC
 	}
 
-	b = b[len(b)-size:]
+	b = buf[3-len(b):]
 	h := new(blockHeader50)
 	h.htype = b.uvarint()
 	h.flags = b.uvarint()
@@ -548,7 +550,7 @@ func (a *archive50) readBlockHeader(r sliceReader) (*blockHeader50, error) {
 	return h, nil
 }
 
-func (a *archive50) mustReadBlockHeader(r sliceReader) (*blockHeader50, error) {
+func (a *archive50) mustReadBlockHeader(r byteReader) (*blockHeader50, error) {
 	h, err := a.readBlockHeader(r)
 	if err != nil {
 		if err == io.EOF {
