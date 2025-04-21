@@ -6,7 +6,6 @@ import (
 	"errors"
 	"hash/crc32"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -62,11 +61,12 @@ type blockHeader15 struct {
 	dataSize int64   // size of extra block data
 }
 
-// archive15 implements fileBlockReader for RAR 1.5 file format archives
+// archive15 implements archiveBlockReader for RAR 1.5 file format archives
 type archive15 struct {
 	multi     bool // archive is multi-volume
 	solid     bool // archive is a solid archive
 	encrypted bool
+	oldNaming bool
 	pass      []uint16              // password in UTF-16
 	keyCache  [cacheSize30]struct { // cache of previously calculated decryption keys
 		salt []byte
@@ -75,10 +75,8 @@ type archive15 struct {
 	}
 }
 
-func (a *archive15) clone() fileBlockReader {
-	na := new(archive15)
-	*na = *a
-	return na
+func (a *archive15) useOldNaming() bool {
+	return a.oldNaming
 }
 
 // Calculates the key and iv for AES decryption given a password and salt.
@@ -350,12 +348,10 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 	return f, nil
 }
 
-func (a *archive15) parseArcBlock(v *volume, h *blockHeader15) error {
+func (a *archive15) parseArcBlock(h *blockHeader15) error {
 	a.encrypted = h.flags&arcEncrypted > 0
 	a.multi = h.flags&arcVolume > 0
-	if v.num == 0 {
-		v.old = h.flags&arcNewNaming == 0
-	}
+	a.oldNaming = h.flags&arcNewNaming == 0
 	a.solid = h.flags&arcSolid > 0
 	if a.encrypted && a.pass == nil {
 		return ErrArchiveEncrypted
@@ -437,44 +433,31 @@ func (a *archive15) readBlockHeader(r byteReader) (*blockHeader15, error) {
 	return h, nil
 }
 
-func (a *archive15) readArcHeader(v *volume) error {
-	h, err := a.readBlockHeader(v)
+func (a *archive15) initVolume(r byteReader) (int, error) {
+	a.encrypted = false // reset encryption when opening new volume file
+	h, err := a.readBlockHeader(r)
 	if err != nil {
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
 		}
-		return err
+	} else if h.htype != blockArc {
+		err = ErrNoArchiveBlock
+	} else {
+		err = a.parseArcBlock(h)
 	}
-	if h.htype != blockArc {
-		return ErrNoArchiveBlock
-	}
-	return a.parseArcBlock(v, h)
+	return -1, err
 }
 
-// next advances to the next file block in the archive
-func (a *archive15) next(v *volume) (*fileBlockHeader, error) {
+// nextBlock advances to the next file block in the archive
+func (a *archive15) nextBlock(v *volume) (*fileBlockHeader, error) {
 	for {
 		// could return an io.EOF here as 1.5 archives may not have an end block.
 		h, err := a.readBlockHeader(v)
 		if err != nil {
-			if err != io.EOF {
-				return nil, err
+			if err == io.EOF {
+				return nil, errVolumeOrArchiveEnd
 			}
-			// if reached end of file without an end block try to open next volume
-			a.encrypted = false // reset encryption when opening new volume file
-			err = v.next()
-			if err != nil {
-				// new volume doesnt exist, assume end of archive
-				if os.IsNotExist(err) {
-					return nil, io.EOF
-				}
-				return nil, err
-			}
-			err = a.readArcHeader(v)
-			if err != nil {
-				return nil, err
-			}
-			continue
+			return nil, err
 		}
 		switch h.htype {
 		case blockFile:
@@ -483,15 +466,7 @@ func (a *archive15) next(v *volume) (*fileBlockHeader, error) {
 			if h.flags&endArcNotLast == 0 || !a.multi {
 				return nil, io.EOF
 			}
-			a.encrypted = false // reset encryption when opening new volume file
-			err = v.next()
-			if err != nil {
-				return nil, err
-			}
-			err = a.readArcHeader(v)
-			if err != nil {
-				return nil, err
-			}
+			return nil, errVolumeEnd
 		default:
 			if h.dataSize > 0 {
 				err = v.discard(h.dataSize) // skip over block data
@@ -503,11 +478,11 @@ func (a *archive15) next(v *volume) (*fileBlockHeader, error) {
 	}
 }
 
-// newArchive15 creates a new fileBlockReader for a Version 1.5 archive
-func newArchive15(v *volume, password *string) (*archive15, error) {
-	a := new(archive15)
+// newArchive15 creates a new archiveBlockReader for a Version 1.5 archive
+func newArchive15(password *string) *archive15 {
+	a := &archive15{}
 	if password != nil {
 		a.pass = utf16.Encode([]rune(*password)) // convert to UTF-16
 	}
-	return a, a.readArcHeader(v)
+	return a
 }

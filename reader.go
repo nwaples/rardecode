@@ -104,18 +104,7 @@ type byteReader interface {
 type packedFileReader struct {
 	n int64 // bytes left in current data block
 	v *volume
-	r fileBlockReader
 	h *fileBlockHeader // current file header
-}
-
-// init initializes a cloned packedFileReader
-func (f *packedFileReader) init() error { return f.v.init() }
-
-func (f *packedFileReader) clone() *packedFileReader {
-	nr := &packedFileReader{n: f.n, h: f.h}
-	nr.r = f.r.clone()
-	nr.v = f.v.clone()
-	return nr
 }
 
 func (f *packedFileReader) Close() error { return f.v.Close() }
@@ -137,7 +126,7 @@ func (f *packedFileReader) nextBlock() error {
 	if f.h.last {
 		return io.EOF
 	}
-	h, err := f.r.next(f.v)
+	h, err := f.v.nextBlock()
 	if err != nil {
 		if err == io.EOF {
 			// archive ended, but file hasn't
@@ -154,7 +143,7 @@ func (f *packedFileReader) nextBlock() error {
 }
 
 // next advances to the next packed file in the RAR archive.
-func (f *packedFileReader) next() (*fileBlockHeader, error) {
+func (f *packedFileReader) nextFile() (*fileBlockHeader, error) {
 	// skip to last block in current file
 	var err error
 	for err == nil {
@@ -163,7 +152,7 @@ func (f *packedFileReader) next() (*fileBlockHeader, error) {
 	if err != io.EOF {
 		return nil, err
 	}
-	f.h, err = f.r.next(f.v) // get next file block
+	f.h, err = f.v.nextBlock() // get next file block
 	if err != nil {
 		return nil, err
 	}
@@ -210,23 +199,6 @@ func (f *packedFileReader) ReadByte() (byte, error) {
 	}
 	f.n--
 	return b, nil
-}
-
-func newPackedFileReader(v *volume, pass *string) (*packedFileReader, error) {
-	var err error
-	var fbr fileBlockReader
-	switch v.ver {
-	case archiveVersion15:
-		fbr, err = newArchive15(v, pass)
-	case archiveVersion50:
-		fbr, err = newArchive50(v, pass)
-	default:
-		err = ErrUnknownVersion
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &packedFileReader{r: fbr, v: v}, nil
 }
 
 type limitedReader struct {
@@ -388,7 +360,7 @@ func (r *Reader) Next() (*FileHeader, error) {
 		}
 	}
 	// get next packed file
-	h, err := r.pr.next()
+	h, err := r.pr.nextFile()
 	if err != nil {
 		return nil, err
 	}
@@ -434,21 +406,17 @@ func (r *Reader) nextFile() error {
 // Multi-volume archives must use OpenReader.
 func NewReader(r io.Reader, opts ...Option) (*Reader, error) {
 	options := getOptions(opts)
-	v, err := newVolume(r, options)
+	v, err := newVolume(r, options, 0)
 	if err != nil {
 		return nil, err
 	}
-	pr, err := newPackedFileReader(v, options.pass)
-	if err != nil {
-		return nil, err
-	}
+	pr := &packedFileReader{v: v}
 	return &Reader{pr: pr}, nil
 }
 
 // ReadCloser is a Reader that allows closing of the rar archive.
 type ReadCloser struct {
 	Reader
-	v *volume
 }
 
 // Close closes the rar file.
@@ -460,7 +428,7 @@ func (rc *ReadCloser) Close() error {
 // up to this point. This will include the current open volume if the archive is still
 // being processed.
 func (rc *ReadCloser) Volumes() []string {
-	return rc.v.files
+	return rc.Reader.pr.v.vm.files
 }
 
 // OpenReader opens a RAR archive specified by the name and returns a ReadCloser.
@@ -470,28 +438,19 @@ func OpenReader(name string, opts ...Option) (*ReadCloser, error) {
 	if options.fs == nil {
 		options.fs = defaultFS
 	}
-	f, err := options.fs.Open(name)
+	v, err := openVolume(options)
 	if err != nil {
 		return nil, err
 	}
-	v, err := newVolume(f, options)
-	if err != nil {
-		_ = f.Close()
-		return nil, err
-	}
-	pr, err := newPackedFileReader(v, options.pass)
-	if err != nil {
-		_ = v.Close()
-		return nil, err
-	}
-
-	return &ReadCloser{Reader: Reader{pr: pr}, v: v}, nil
+	pr := &packedFileReader{v: v}
+	return &ReadCloser{Reader{pr: pr}}, nil
 }
 
 // File represents a file in a RAR archive
 type File struct {
 	FileHeader
-	pr *packedFileReader
+	h  *fileBlockHeader
+	vm *volumeManager
 }
 
 // Open returns an io.ReadCloser that provides access to the File's contents.
@@ -502,14 +461,17 @@ func (f *File) Open() (io.ReadCloser, error) {
 	if f.Solid {
 		return nil, ErrSolidOpen
 	}
-	r := new(ReadCloser)
-	r.pr = f.pr.clone()
-	err := r.pr.init()
+	v, err := f.vm.newVolume(f.h.volnum)
 	if err != nil {
-		r.Close()
 		return nil, err
 	}
-	return r, nil
+	err = v.discard(f.h.dataOff - v.off)
+	if err != nil {
+		v.Close()
+		return nil, err
+	}
+	pr := &packedFileReader{v: v, h: f.h, n: f.h.PackedSize}
+	return &ReadCloser{Reader{pr: pr}}, nil
 }
 
 // List returns a list of File's in the RAR archive specified by name.
@@ -524,7 +486,7 @@ func List(name string, opts ...Option) ([]*File, error) {
 	var fl []*File
 	for {
 		// get next file
-		h, err := pr.next()
+		h, err := pr.nextFile()
 		if err != nil {
 			if err == io.EOF {
 				return fl, nil
@@ -533,9 +495,11 @@ func List(name string, opts ...Option) ([]*File, error) {
 		}
 
 		// save information for File
-		f := new(File)
-		f.FileHeader = h.FileHeader
-		f.pr = pr.clone()
+		f := &File{
+			FileHeader: h.FileHeader,
+			h:          h,
+			vm:         pr.v.vm,
+		}
 		fl = append(fl, f)
 	}
 }

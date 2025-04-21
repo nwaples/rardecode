@@ -109,7 +109,7 @@ func newLittleEndianCRC32() hash.Hash {
 	return leHash32{crc32.NewIEEE()}
 }
 
-// archive50 implements fileBlockReader for RAR 5 file format archives
+// archive50 implements archiveBlockReader for RAR 5 file format archives
 type archive50 struct {
 	pass     []byte
 	blockKey []byte                // key used to encrypt blocks
@@ -122,10 +122,8 @@ type archive50 struct {
 	}
 }
 
-func (a *archive50) clone() fileBlockReader {
-	na := new(archive50)
-	*na = *a
-	return na
+func (a *archive50) useOldNaming() bool {
+	return false
 }
 
 // calcKeys50 calculates the keys used in RAR 5 archive processing.
@@ -475,14 +473,14 @@ func (a *archive50) parseEncryptionBlock(b readBuf) error {
 	return nil
 }
 
-func (a *archive50) parseArcBlock(v *volume, h *blockHeader50) error {
+func (a *archive50) parseArcBlock(h *blockHeader50) int {
 	flags := h.data.uvarint()
 	a.multi = flags&arc5MultiVol > 0
 	a.solid = flags&arc5Solid > 0
-	if flags&arc5VolNum > 0 && h.data.uvarint() != uint64(v.num) {
-		return ErrBadVolumeNumber
+	if flags&arc5VolNum > 0 {
+		return int(h.data.uvarint())
 	}
-	return nil
+	return -1
 }
 
 func (a *archive50) readBlockHeader(r byteReader) (*blockHeader50, error) {
@@ -561,29 +559,32 @@ func (a *archive50) mustReadBlockHeader(r byteReader) (*blockHeader50, error) {
 	return h, nil
 }
 
-func (a *archive50) readArcHeaders(v *volume) error {
-	h, err := a.mustReadBlockHeader(v)
+func (a *archive50) initVolume(r byteReader) (int, error) {
+	a.blockKey = nil // reset encryption when opening new volume file
+	volnum := -1
+	h, err := a.mustReadBlockHeader(r)
 	if err != nil {
-		return err
+		return volnum, err
 	}
 	if h.htype == block5Encrypt {
 		err = a.parseEncryptionBlock(h.data)
 		if err != nil {
-			return err
+			return volnum, err
 		}
-		h, err = a.mustReadBlockHeader(v)
+		h, err = a.mustReadBlockHeader(r)
 		if err != nil {
-			return err
+			return volnum, err
 		}
 	}
 	if h.htype != block5Arc {
-		return ErrNoArchiveBlock
+		return volnum, ErrNoArchiveBlock
 	}
-	return a.parseArcBlock(v, h)
+	volnum = a.parseArcBlock(h)
+	return volnum, nil
 }
 
-// next advances to the next file block in the archive
-func (a *archive50) next(v *volume) (*fileBlockHeader, error) {
+// nextBlock advances to the next file block in the archive
+func (a *archive50) nextBlock(v *volume) (*fileBlockHeader, error) {
 	for {
 		// get next block header
 		h, err := a.mustReadBlockHeader(v)
@@ -598,15 +599,7 @@ func (a *archive50) next(v *volume) (*fileBlockHeader, error) {
 			if flags&endArc5NotLast == 0 || !a.multi {
 				return nil, io.EOF
 			}
-			a.blockKey = nil // reset encryption when opening new volume file
-			err = v.next()
-			if err != nil {
-				return nil, err
-			}
-			err = a.readArcHeaders(v)
-			if err != nil {
-				return nil, err
-			}
+			return nil, errVolumeEnd
 		default:
 			if h.dataSize > 0 {
 				err = v.discard(h.dataSize) // skip over block data
@@ -618,11 +611,11 @@ func (a *archive50) next(v *volume) (*fileBlockHeader, error) {
 	}
 }
 
-// newArchive50 creates a new fileBlockReader for a Version 5 archive.
-func newArchive50(v *volume, password *string) (*archive50, error) {
-	a := new(archive50)
+// newArchive50 creates a new archiveBlockReader for a Version 5 archive.
+func newArchive50(password *string) *archive50 {
+	a := &archive50{}
 	if password != nil {
 		a.pass = []byte(*password)
 	}
-	return a, a.readArcHeaders(v)
+	return a
 }

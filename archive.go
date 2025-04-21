@@ -24,6 +24,8 @@ var (
 	ErrDecoderOutOfData      = errors.New("rardecode: decoder expected more data than is in packed file")
 	ErrArchiveEncrypted      = errors.New("rardecode: archive encrypted, password required")
 	ErrArchivedFileEncrypted = errors.New("rardecode: archived files encrypted, password required")
+	errVolumeEnd             = errors.New("rardecode: archive volume end")
+	errVolumeOrArchiveEnd    = errors.New("rardecode: archive or volume end")
 )
 
 type readBuf []byte
@@ -83,6 +85,8 @@ type fileBlockHeader struct {
 	first    bool             // first block in file
 	last     bool             // last block in file
 	arcSolid bool             // archive is solid
+	dataOff  int64            // offset to data for file block in archive volume
+	volnum   int              // archive volume number
 	winSize  int              // decode window size
 	hash     func() hash.Hash // hash used for file checksum
 	hashKey  []byte           // optional hmac key to be used calculate file checksum
@@ -104,8 +108,9 @@ func (f *fileBlockHeader) getKeys() (key, iv []byte, err error) {
 	return f.key, f.iv, nil
 }
 
-// fileBlockReader returns the next fileBlockHeader in a volume.
-type fileBlockReader interface {
-	next(v *volume) (*fileBlockHeader, error) // reads the volume and returns the next fileBlockHeader
-	clone() fileBlockReader                   // makes a copy of the fileBlockReader
+// archiveBlockReader returns the next fileBlockHeader in an archive volume.
+type archiveBlockReader interface {
+	nextBlock(v *volume) (*fileBlockHeader, error) // reads the volume and returns the next fileBlockHeader
+	initVolume(r byteReader) (int, error)          // init volume and returns optional (>=0) volume number
+	useOldNaming() bool
 }
