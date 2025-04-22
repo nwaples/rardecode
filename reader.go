@@ -107,6 +107,11 @@ type packedFileReader struct {
 	h *fileBlockHeader // current file header
 }
 
+func (f *packedFileReader) init(h *fileBlockHeader) {
+	f.n = h.PackedSize
+	f.h = h
+}
+
 func (f *packedFileReader) Close() error { return f.v.Close() }
 
 // nextBlock reads the next file block in the current file at the current
@@ -137,8 +142,7 @@ func (f *packedFileReader) nextBlock() error {
 	if h.first || h.Name != f.h.Name {
 		return ErrInvalidFileBlock
 	}
-	f.n = h.PackedSize
-	f.h = h
+	f.init(h)
 	return nil
 }
 
@@ -298,82 +302,20 @@ func (cr *checksumReader) ReadByte() (byte, error) {
 	return b, err
 }
 
-// Reader provides sequential access to files in a RAR archive.
-type Reader struct {
+type reader struct {
 	r  byteReader        // reader for current unpacked file
 	dr *decodeReader     // reader for decoding and filters if file is compressed
 	pr *packedFileReader // reader for current raw file bytes
 }
 
-// Read reads from the current file in the RAR archive.
-func (r *Reader) Read(p []byte) (int, error) {
-	if r.r == nil {
-		err := r.nextFile()
-		if err != nil {
-			return 0, err
-		}
-	}
-	return r.r.Read(p)
-}
-
-// ReadByte reads and returns a single byte.
-func (r *Reader) ReadByte() (byte, error) {
-	if r.r == nil {
-		err := r.nextFile()
-		if err != nil {
-			return 0, err
-		}
-	}
-	return r.r.ReadByte()
-}
-
-// WriteTo implements io.WriterTo.
-func (r *Reader) WriteTo(w io.Writer) (int64, error) {
-	if r.r == nil {
-		err := r.nextFile()
-		if err != nil {
-			return 0, err
-		}
-	}
-	if wr, ok := r.r.(io.WriterTo); ok {
-		return wr.WriteTo(w)
-	}
-	return io.Copy(w, r.r)
-}
-
-// Next advances to the next file in the archive.
-func (r *Reader) Next() (*FileHeader, error) {
-	// check if file is a compressed file in a solid archive
-	if h := r.pr.h; h != nil && h.decVer > 0 && h.arcSolid {
-		var err error
-		if r.r == nil {
-			// setup full file reader
-			err = r.nextFile()
-			if err != nil {
-				return nil, err
-			}
-		}
-		// decode and discard bytes
-		_, err = io.Copy(io.Discard, r.dr)
-		if err != nil {
-			return nil, err
-		}
-	}
-	// get next packed file
-	h, err := r.pr.nextFile()
-	if err != nil {
-		return nil, err
-	}
-	// Clear the reader as it will be setup on the next Read() or WriteTo().
-	r.r = nil
-	return &h.FileHeader, nil
-}
-
-func (r *Reader) nextFile() error {
-	h := r.pr.h
+func (r *reader) init(h *fileBlockHeader) error {
 	if h == nil {
 		return io.EOF
 	}
+	if !h.first {
+		return ErrInvalidFileBlock
+	}
+	r.pr.init(h)
 	// start with packed file reader
 	r.r = r.pr
 	// check for encryption
@@ -401,6 +343,65 @@ func (r *Reader) nextFile() error {
 	return nil
 }
 
+// Read reads from the current file in the RAR archive.
+func (r *reader) Read(p []byte) (int, error) {
+	if r.r == nil {
+		return 0, io.EOF
+	}
+	return r.r.Read(p)
+}
+
+// ReadByte reads and returns a single byte.
+func (r *reader) ReadByte() (byte, error) {
+	if r.r == nil {
+		return 0, io.EOF
+	}
+	return r.r.ReadByte()
+}
+
+// WriteTo implements io.WriterTo.
+func (r *reader) WriteTo(w io.Writer) (int64, error) {
+	if r.r == nil {
+		return 0, io.EOF
+	}
+	if wr, ok := r.r.(io.WriterTo); ok {
+		return wr.WriteTo(w)
+	}
+	return io.Copy(w, r.r)
+}
+
+func newReader(v *volume) reader {
+	return reader{pr: &packedFileReader{v: v}}
+}
+
+// Reader provides sequential access to files in a RAR archive.
+type Reader struct {
+	reader
+}
+
+// Next advances to the next file in the archive.
+func (r *Reader) Next() (*FileHeader, error) {
+	// check if file is a compressed file in a solid archive
+	if h := r.pr.h; h != nil && h.decVer > 0 && h.arcSolid {
+		// decode and discard bytes
+		_, err := io.Copy(io.Discard, r.dr)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// get next packed file
+	h, err := r.pr.nextFile()
+	if err != nil {
+		return nil, err
+	}
+	// Clear the reader as it will be setup on the next Read() or WriteTo().
+	err = r.reader.init(h)
+	if err != nil {
+		return nil, err
+	}
+	return &h.FileHeader, nil
+}
+
 // NewReader creates a Reader reading from r.
 // NewReader only supports single volume archives.
 // Multi-volume archives must use OpenReader.
@@ -410,8 +411,8 @@ func NewReader(r io.Reader, opts ...Option) (*Reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	pr := &packedFileReader{v: v}
-	return &Reader{pr: pr}, nil
+	rdr := &Reader{reader: newReader(v)}
+	return rdr, nil
 }
 
 // ReadCloser is a Reader that allows closing of the rar archive.
@@ -442,8 +443,9 @@ func OpenReader(name string, opts ...Option) (*ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	pr := &packedFileReader{v: v}
-	return &ReadCloser{Reader{pr: pr}}, nil
+	rc := &ReadCloser{}
+	rc.reader = newReader(v)
+	return rc, nil
 }
 
 // File represents a file in a RAR archive
@@ -470,8 +472,15 @@ func (f *File) Open() (io.ReadCloser, error) {
 		v.Close()
 		return nil, err
 	}
-	pr := &packedFileReader{v: v, h: f.h, n: f.h.PackedSize}
-	return &ReadCloser{Reader{pr: pr}}, nil
+	reader := newReader(v)
+	err = reader.init(f.h)
+	if err != nil {
+		v.Close()
+		return nil, err
+	}
+	rc := &ReadCloser{}
+	rc.reader = reader
+	return rc, nil
 }
 
 // List returns a list of File's in the RAR archive specified by name.
