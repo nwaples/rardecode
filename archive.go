@@ -110,7 +110,7 @@ func (f *fileBlockHeader) getKeys() (key, iv []byte, err error) {
 
 // archiveBlockReader returns the next fileBlockHeader in an archive volume.
 type archiveBlockReader interface {
-	nextBlock(v *volume) (*fileBlockHeader, error) // reads the volume and returns the next fileBlockHeader
-	initVolume(r byteReader) (int, error)          // init volume and returns optional (>=0) volume number
+	init(br *bufVolumeReader) (int, error)                   // init volume and returns optional (>=0) volume number
+	nextBlock(br *bufVolumeReader) (*fileBlockHeader, error) // reads the volume and returns the next fileBlockHeader
 	useOldNaming() bool
 }

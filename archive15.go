@@ -433,9 +433,9 @@ func (a *archive15) readBlockHeader(r byteReader) (*blockHeader15, error) {
 	return h, nil
 }
 
-func (a *archive15) initVolume(r byteReader) (int, error) {
+func (a *archive15) init(br *bufVolumeReader) (int, error) {
 	a.encrypted = false // reset encryption when opening new volume file
-	h, err := a.readBlockHeader(r)
+	h, err := a.readBlockHeader(br)
 	if err != nil {
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
@@ -449,10 +449,10 @@ func (a *archive15) initVolume(r byteReader) (int, error) {
 }
 
 // nextBlock advances to the next file block in the archive
-func (a *archive15) nextBlock(v *volume) (*fileBlockHeader, error) {
+func (a *archive15) nextBlock(br *bufVolumeReader) (*fileBlockHeader, error) {
 	for {
 		// could return an io.EOF here as 1.5 archives may not have an end block.
-		h, err := a.readBlockHeader(v)
+		h, err := a.readBlockHeader(br)
 		if err != nil {
 			if err == io.EOF {
 				return nil, errVolumeOrArchiveEnd
@@ -469,7 +469,7 @@ func (a *archive15) nextBlock(v *volume) (*fileBlockHeader, error) {
 			return nil, errVolumeEnd
 		default:
 			if h.dataSize > 0 {
-				err = v.discard(h.dataSize) // skip over block data
+				err = br.Discard(h.dataSize) // skip over block data
 				if err != nil {
 					return nil, err
 				}

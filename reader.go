@@ -463,13 +463,8 @@ func (f *File) Open() (io.ReadCloser, error) {
 	if f.Solid {
 		return nil, ErrSolidOpen
 	}
-	v, err := f.vm.newVolume(f.h.volnum)
+	v, err := f.vm.openVolumeOffset(f.h.volnum, f.h.dataOff)
 	if err != nil {
-		return nil, err
-	}
-	err = v.discard(f.h.dataOff - v.off)
-	if err != nil {
-		v.Close()
 		return nil, err
 	}
 	reader := newReader(v)

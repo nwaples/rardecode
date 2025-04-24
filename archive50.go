@@ -501,6 +501,7 @@ func (a *archive50) readBlockHeader(r byteReader) (*blockHeader50, error) {
 	}
 	b := readBuf(sizeBuf)
 	crc := b.uint32()
+	// TODO: check size is valid
 	size := int(b.uvarint()) // header size
 
 	buf := make([]byte, 3+size-len(b))
@@ -559,10 +560,10 @@ func (a *archive50) mustReadBlockHeader(r byteReader) (*blockHeader50, error) {
 	return h, nil
 }
 
-func (a *archive50) initVolume(r byteReader) (int, error) {
+func (a *archive50) init(br *bufVolumeReader) (int, error) {
 	a.blockKey = nil // reset encryption when opening new volume file
 	volnum := -1
-	h, err := a.mustReadBlockHeader(r)
+	h, err := a.mustReadBlockHeader(br)
 	if err != nil {
 		return volnum, err
 	}
@@ -571,7 +572,7 @@ func (a *archive50) initVolume(r byteReader) (int, error) {
 		if err != nil {
 			return volnum, err
 		}
-		h, err = a.mustReadBlockHeader(r)
+		h, err = a.mustReadBlockHeader(br)
 		if err != nil {
 			return volnum, err
 		}
@@ -584,10 +585,10 @@ func (a *archive50) initVolume(r byteReader) (int, error) {
 }
 
 // nextBlock advances to the next file block in the archive
-func (a *archive50) nextBlock(v *volume) (*fileBlockHeader, error) {
+func (a *archive50) nextBlock(br *bufVolumeReader) (*fileBlockHeader, error) {
 	for {
 		// get next block header
-		h, err := a.mustReadBlockHeader(v)
+		h, err := a.mustReadBlockHeader(br)
 		if err != nil {
 			return nil, err
 		}
@@ -602,7 +603,7 @@ func (a *archive50) nextBlock(v *volume) (*fileBlockHeader, error) {
 			return nil, errVolumeEnd
 		default:
 			if h.dataSize > 0 {
-				err = v.discard(h.dataSize) // skip over block data
+				err = br.Discard(h.dataSize) // skip over block data
 				if err != nil {
 					return nil, err
 				}

@@ -1,13 +1,10 @@
 package rardecode
 
 import (
-	"bufio"
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
-	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,19 +12,13 @@ import (
 	"sync"
 )
 
-const (
-	maxSfxSize = 0x100000 // maximum number of bytes to read when searching for RAR signature
-	sigPrefix  = "Rar!\x1A\x07"
-)
-
 var (
-	ErrNoSig            = errors.New("rardecode: RAR signature not found")
 	ErrVerMismatch      = errors.New("rardecode: volume version mistmatch")
 	ErrArchiveNameEmpty = errors.New("rardecode: archive name empty")
 	ErrFileNameRequired = errors.New("rardecode: filename required for multi volume archive")
+	ErrInvalidHeaderOff = errors.New("rardecode: invalid filed header offset")
 
-	defaultFS      = osFS{}
-	defaultBufSize = 4096
+	defaultFS = osFS{}
 )
 
 type osFS struct{}
@@ -62,7 +53,7 @@ func Password(pass string) Option {
 }
 
 func getOptions(opts []Option) *options {
-	opt := &options{bsize: defaultBufSize}
+	opt := &options{}
 	for _, f := range opts {
 		f(opt)
 	}
@@ -80,32 +71,27 @@ func getOptions(opts []Option) *options {
 // volume extends a archiveBlockReader to be used across multiple
 // files in a multi-volume archive
 type volume struct {
-	br  *bufio.Reader // buffered reader for current volume file
-	num int           // current volume number
-	off int64         // current file offset
-	ver int           // archive file format version
+	br  *bufVolumeReader // buffered reader for current volume file
+	num int              // current volume number
+	ver int              // archive file format version
 	cl  io.Closer
-	sr  io.ReadSeeker
 	arc archiveBlockReader
 	vm  *volumeManager
 	opt *options
 }
 
 func (v *volume) init(r io.Reader, volnum int) error {
+	var err error
 	if v.br == nil {
-		v.br = bufio.NewReaderSize(r, v.opt.bsize)
+		v.br, err = newBufVolumeReader(r, v.opt.bsize)
 	} else {
-		v.br.Reset(r)
+		err = v.br.Reset(r)
 	}
-	if sr, ok := r.(io.ReadSeeker); ok {
-		v.sr = sr
-	}
-	ver, err := v.findSig()
 	if err != nil {
 		return err
 	}
 	if v.arc == nil {
-		switch ver {
+		switch v.br.ver {
 		case archiveVersion15:
 			v.arc = newArchive15(v.opt.pass)
 		case archiveVersion50:
@@ -113,11 +99,11 @@ func (v *volume) init(r io.Reader, volnum int) error {
 		default:
 			return ErrUnknownVersion
 		}
-		v.ver = ver
-	} else if ver != v.ver {
+		v.ver = v.br.ver
+	} else if v.ver != v.br.ver {
 		return ErrVerMismatch
 	}
-	n, err := v.arc.initVolume(v)
+	n, err := v.arc.init(v.br)
 	if err != nil {
 		return err
 	}
@@ -132,35 +118,13 @@ func (v *volume) Close() error {
 	if v.cl != nil {
 		err := v.cl.Close()
 		v.cl = nil
-		v.sr = nil
 		return err
 	}
 	return nil
 }
 
 func (v *volume) discard(n int64) error {
-	var err error
-	v.off += n
-	l := int64(v.br.Buffered())
-	if n <= l {
-		_, err = v.br.Discard(int(n))
-	} else if v.sr != nil {
-		n -= l
-		_, err = v.sr.Seek(n, io.SeekCurrent)
-		v.br.Reset(v.sr)
-	} else {
-		for n > math.MaxInt && err == nil {
-			_, err = v.br.Discard(math.MaxInt)
-			n -= math.MaxInt
-		}
-		if err == nil && n > 0 {
-			_, err = v.br.Discard(int(n))
-		}
-	}
-	if err == io.EOF {
-		err = io.ErrUnexpectedEOF
-	}
-	return err
+	return v.br.Discard(n)
 }
 
 func (v *volume) open(volnum int) error {
@@ -171,7 +135,7 @@ func (v *volume) open(volnum int) error {
 	if err != nil {
 		return err
 	}
-	f, err := v.vm.open(volnum)
+	f, err := v.vm.openVolumeFile(volnum)
 	if err != nil {
 		return err
 	}
@@ -186,10 +150,10 @@ func (v *volume) open(volnum int) error {
 
 func (v *volume) nextBlock() (*fileBlockHeader, error) {
 	for {
-		f, err := v.arc.nextBlock(v)
+		f, err := v.arc.nextBlock(v.br)
 		if err == nil {
 			f.volnum = v.num
-			f.dataOff = v.off
+			f.dataOff = v.br.off
 			return f, nil
 		}
 		nextVol := v.num + 1
@@ -215,56 +179,12 @@ func (v *volume) nextBlock() (*fileBlockHeader, error) {
 
 func (v *volume) Read(p []byte) (int, error) {
 	n, err := v.br.Read(p)
-	v.off += int64(n)
 	return n, err
 }
 
 func (v *volume) ReadByte() (byte, error) {
 	b, err := v.br.ReadByte()
-	v.off++
 	return b, err
-}
-
-// findSig searches for the RAR signature and version at the beginning of a file.
-// It searches no more than maxSfxSize bytes.
-func (v *volume) findSig() (int, error) {
-	v.off = 0
-	for v.off <= maxSfxSize {
-		b, err := v.br.ReadSlice(sigPrefix[0])
-		v.off += int64(len(b))
-		if err == bufio.ErrBufferFull {
-			continue
-		} else if err != nil {
-			if err == io.EOF {
-				err = ErrNoSig
-			}
-			return 0, err
-		}
-
-		b, err = v.br.Peek(len(sigPrefix[1:]) + 2)
-		if err != nil {
-			if err == io.EOF {
-				err = ErrNoSig
-			}
-			return 0, err
-		}
-		if !bytes.HasPrefix(b, []byte(sigPrefix[1:])) {
-			continue
-		}
-		b = b[len(sigPrefix)-1:]
-
-		ver := int(b[0])
-		if b[0] != 0 && b[1] != 0 {
-			continue
-		}
-		b, err = v.br.ReadSlice('\x00')
-		if err != nil {
-			return 0, err
-		}
-		v.off += int64(len(b))
-		return ver, nil
-	}
-	return 0, ErrNoSig
 }
 
 func newVolume(r io.Reader, opt *options, volnum int) (*volume, error) {
@@ -398,7 +318,7 @@ func (vm *volumeManager) tryNewName(file string) (fs.File, error) {
 }
 
 // next opens the next volume file in the archive.
-func (vm *volumeManager) open(volnum int) (fs.File, error) {
+func (vm *volumeManager) openVolumeFile(volnum int) (fs.File, error) {
 	vm.mu.Lock()
 	defer vm.mu.Unlock()
 
@@ -427,7 +347,7 @@ func (vm *volumeManager) open(volnum int) (fs.File, error) {
 }
 
 func (vm *volumeManager) newVolume(volnum int) (*volume, error) {
-	f, err := vm.open(volnum)
+	f, err := vm.openVolumeFile(volnum)
 	if err != nil {
 		return nil, err
 	}
@@ -438,6 +358,26 @@ func (vm *volumeManager) newVolume(volnum int) (*volume, error) {
 	}
 	v.cl = f
 	v.vm = vm
+	return v, nil
+}
+
+func (vm *volumeManager) openVolumeOffset(volnum int, offset int64) (*volume, error) {
+	v, err := vm.newVolume(volnum)
+	if err != nil {
+		return nil, err
+	}
+	if offset == 0 || offset == v.br.off {
+		return v, nil
+	}
+	if offset < v.br.off {
+		v.Close()
+		return nil, ErrInvalidHeaderOff
+	}
+	err = v.br.Discard(offset - v.br.off)
+	if err != nil {
+		v.Close()
+		return nil, err
+	}
 	return v, nil
 }
 
