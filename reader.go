@@ -102,13 +102,11 @@ type byteReader interface {
 
 // packedFileReader provides sequential access to packed files in a RAR archive.
 type packedFileReader struct {
-	n int64 // bytes left in current data block
 	v *volume
 	h *fileBlockHeader // current file header
 }
 
 func (f *packedFileReader) init(h *fileBlockHeader) {
-	f.n = h.PackedSize
 	f.h = h
 }
 
@@ -120,13 +118,6 @@ func (f *packedFileReader) Close() error { return f.v.Close() }
 func (f *packedFileReader) nextBlock() error {
 	if f.h == nil {
 		return io.EOF
-	}
-	// discard current block data
-	if f.n > 0 {
-		if err := f.v.discard(f.n); err != nil {
-			return err
-		}
-		f.n = 0
 	}
 	if f.h.last {
 		return io.EOF
@@ -163,46 +154,34 @@ func (f *packedFileReader) nextFile() (*fileBlockHeader, error) {
 	if !f.h.first {
 		return nil, ErrInvalidFileBlock
 	}
-	f.n = f.h.PackedSize
 	return f.h, nil
 }
 
 // Read reads the packed data for the current file into p.
 func (f *packedFileReader) Read(p []byte) (int, error) {
-	for f.n == 0 {
-		if err := f.nextBlock(); err != nil {
-			return 0, err
+	for {
+		n, err := f.v.Read(p)
+		if err == io.EOF {
+			err = f.nextBlock()
+		}
+		if n > 0 || err != nil {
+			return n, err
 		}
 	}
-	if int64(len(p)) > f.n {
-		p = p[0:f.n]
-	}
-	n, err := f.v.Read(p)
-	f.n -= int64(n)
-	if err == io.EOF && f.n > 0 {
-		return n, io.ErrUnexpectedEOF
-	}
-	if n > 0 {
-		return n, nil
-	}
-	return n, err
 }
 
 func (f *packedFileReader) ReadByte() (byte, error) {
-	for f.n == 0 {
-		if err := f.nextBlock(); err != nil {
-			return 0, err
+	for {
+		b, err := f.v.ReadByte()
+		if err == io.EOF {
+			err = f.nextBlock()
+			if err != nil {
+				return 0, err
+			}
+		} else {
+			return b, err
 		}
 	}
-	b, err := f.v.ReadByte()
-	if err != nil {
-		if err == io.EOF && f.n > 0 {
-			return 0, io.ErrUnexpectedEOF
-		}
-		return 0, err
-	}
-	f.n--
-	return b, nil
 }
 
 type limitedReader struct {
@@ -463,7 +442,7 @@ func (f *File) Open() (io.ReadCloser, error) {
 	if f.Solid {
 		return nil, ErrSolidOpen
 	}
-	v, err := f.vm.openVolumeOffset(f.h.volnum, f.h.dataOff)
+	v, err := f.vm.openBlockOffset(f.h, 0)
 	if err != nil {
 		return nil, err
 	}

@@ -72,6 +72,7 @@ func getOptions(opts []Option) *options {
 // files in a multi-volume archive
 type volume struct {
 	br  *bufVolumeReader // buffered reader for current volume file
+	n   int64            // bytes left in current block
 	num int              // current volume number
 	ver int              // archive file format version
 	cl  io.Closer
@@ -123,10 +124,6 @@ func (v *volume) Close() error {
 	return nil
 }
 
-func (v *volume) discard(n int64) error {
-	return v.br.Discard(n)
-}
-
 func (v *volume) open(volnum int) error {
 	if v.vm == nil {
 		return ErrFileNameRequired
@@ -149,11 +146,18 @@ func (v *volume) open(volnum int) error {
 }
 
 func (v *volume) nextBlock() (*fileBlockHeader, error) {
+	if v.n > 0 {
+		err := v.br.Discard(v.n)
+		if err != nil {
+			return nil, err
+		}
+	}
 	for {
 		f, err := v.arc.nextBlock(v.br)
 		if err == nil {
 			f.volnum = v.num
 			f.dataOff = v.br.off
+			v.n = f.PackedSize
 			return f, nil
 		}
 		nextVol := v.num + 1
@@ -178,12 +182,30 @@ func (v *volume) nextBlock() (*fileBlockHeader, error) {
 }
 
 func (v *volume) Read(p []byte) (int, error) {
+	if v.n == 0 {
+		return 0, io.EOF
+	}
+	if v.n < int64(len(p)) {
+		p = p[:v.n]
+	}
 	n, err := v.br.Read(p)
+	v.n -= int64(n)
+	if err == io.EOF && v.n > 0 {
+		err = io.ErrUnexpectedEOF
+	}
 	return n, err
 }
 
 func (v *volume) ReadByte() (byte, error) {
+	if v.n == 0 {
+		return 0, io.EOF
+	}
 	b, err := v.br.ReadByte()
+	if err == nil {
+		v.n--
+	} else if err == io.EOF && v.n > 0 {
+		err = io.ErrUnexpectedEOF
+	}
 	return b, err
 }
 
@@ -361,19 +383,17 @@ func (vm *volumeManager) newVolume(volnum int) (*volume, error) {
 	return v, nil
 }
 
-func (vm *volumeManager) openVolumeOffset(volnum int, offset int64) (*volume, error) {
-	v, err := vm.newVolume(volnum)
+func (vm *volumeManager) openBlockOffset(h *fileBlockHeader, offset int64) (*volume, error) {
+	v, err := vm.newVolume(h.volnum)
 	if err != nil {
 		return nil, err
 	}
-	if offset == 0 || offset == v.br.off {
-		return v, nil
-	}
-	if offset < v.br.off {
+	if h.dataOff < v.br.off {
 		v.Close()
 		return nil, ErrInvalidHeaderOff
 	}
-	err = v.br.Discard(offset - v.br.off)
+	err = v.br.Discard(h.dataOff - v.br.off + offset)
+	v.n = h.PackedSize - offset
 	if err != nil {
 		v.Close()
 		return nil, err
