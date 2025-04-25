@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"math/bits"
+	"slices"
 	"time"
 )
 
@@ -145,7 +146,7 @@ func calcKeys50(pass, salt []byte, kdfCount int) [][]byte {
 	_, _ = prf.Write([]byte{0, 0, 0, 1})
 
 	t := prf.Sum(nil)
-	u := append([]byte(nil), t...)
+	u := slices.Clone(t)
 
 	kdfCount--
 
@@ -159,7 +160,7 @@ func calcKeys50(pass, salt []byte, kdfCount int) [][]byte {
 			}
 			iter--
 		}
-		keys[i] = append([]byte(nil), t...)
+		keys[i] = slices.Clone(t)
 	}
 
 	pwcheck := keys[2]
@@ -199,7 +200,7 @@ func (a *archive50) getKeys(kdfCount int, salt, check []byte) ([][]byte, error) 
 		// store in cache
 		copy(a.keyCache[1:], a.keyCache[:])
 		a.keyCache[0].kdfCount = kdfCount
-		a.keyCache[0].salt = append([]byte(nil), salt...)
+		a.keyCache[0].salt = slices.Clone(salt)
 		a.keyCache[0].keys = keys
 	}
 
@@ -221,15 +222,15 @@ func (a *archive50) parseFileEncryptionRecord(b readBuf, f *fileBlockHeader) err
 		return ErrCorruptEncryptData
 	}
 	kdfCount := int(b.byte())
-	salt := append([]byte(nil), b.bytes(16)...)
-	f.iv = append([]byte(nil), b.bytes(16)...)
+	salt := slices.Clone(b.bytes(16))
+	f.iv = slices.Clone(b.bytes(16))
 
 	var check []byte
 	if flags&file5EncCheckPresent > 0 {
 		if len(b) < 12 {
 			return ErrCorruptEncryptData
 		}
-		check = append([]byte(nil), b.bytes(12)...)
+		check = slices.Clone(b.bytes(12))
 	}
 	useMac := flags&file5EncUseMac > 0
 	// only need to generate keys for first block or
@@ -368,7 +369,7 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 		if len(h.data) < 4 {
 			return nil, ErrCorruptFileHeader
 		}
-		f.sum = append([]byte(nil), h.data.bytes(4)...)
+		f.sum = slices.Clone(h.data.bytes(4))
 		if f.first {
 			f.hash = newLittleEndianCRC32
 		}

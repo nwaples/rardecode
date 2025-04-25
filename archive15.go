@@ -6,6 +6,7 @@ import (
 	"errors"
 	"hash/crc32"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -233,7 +234,7 @@ func (a *archive15) getKeys(salt []byte) (key, iv []byte) {
 
 	// save a copy in the cache
 	copy(a.keyCache[1:], a.keyCache[:])
-	a.keyCache[0].salt = append([]byte(nil), salt...) // copy so byte slice can be reused
+	a.keyCache[0].salt = slices.Clone(salt) // copy so byte slice can be reused
 	a.keyCache[0].key = key
 	a.keyCache[0].iv = iv
 
@@ -266,7 +267,7 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 	if f.HostOS > HostOSBeOS {
 		f.HostOS = HostOSUnknown
 	}
-	f.sum = append([]byte(nil), b.bytes(4)...)
+	f.sum = slices.Clone(b.bytes(4))
 
 	f.ModificationTime = parseDosTime(b.uint32())
 	unpackver := b.byte()     // decoder version
@@ -313,7 +314,7 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 		if len(b) < saltSize {
 			return nil, ErrCorruptFileHeader
 		}
-		salt = append([]byte(nil), b.bytes(saltSize)...)
+		salt = slices.Clone(b.bytes(saltSize))
 	}
 	if h.flags&fileExtTime > 0 {
 		readExtTimes(f, &b)
