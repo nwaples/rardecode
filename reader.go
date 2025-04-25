@@ -106,8 +106,13 @@ type packedFileReader struct {
 	h *fileBlockHeader // current file header
 }
 
-func (f *packedFileReader) init(h *fileBlockHeader) {
+func (f *packedFileReader) init(h *fileBlockHeader) error {
+	if !h.first {
+		return ErrInvalidFileBlock
+	}
+	h.packedOff = 0
 	f.h = h
+	return nil
 }
 
 func (f *packedFileReader) Close() error { return f.v.Close() }
@@ -133,7 +138,8 @@ func (f *packedFileReader) nextBlock() error {
 	if h.first || h.Name != f.h.Name {
 		return ErrInvalidFileBlock
 	}
-	f.init(h)
+	h.packedOff = f.h.packedOff + f.h.PackedSize
+	f.h = h
 	return nil
 }
 
@@ -147,12 +153,13 @@ func (f *packedFileReader) nextFile() (*fileBlockHeader, error) {
 	if err != io.EOF {
 		return nil, err
 	}
-	f.h, err = f.v.nextBlock() // get next file block
+	h, err := f.v.nextBlock() // get next file block
 	if err != nil {
 		return nil, err
 	}
-	if !f.h.first {
-		return nil, ErrInvalidFileBlock
+	err = f.init(h)
+	if err != nil {
+		return nil, err
 	}
 	return f.h, nil
 }
@@ -173,14 +180,16 @@ func (f *packedFileReader) Read(p []byte) (int, error) {
 func (f *packedFileReader) ReadByte() (byte, error) {
 	for {
 		b, err := f.v.ReadByte()
+		if err == nil {
+			return b, nil
+		}
 		if err == io.EOF {
 			err = f.nextBlock()
-			if err != nil {
-				return 0, err
+			if err == nil {
+				continue
 			}
-		} else {
-			return b, err
 		}
+		return b, err
 	}
 }
 
@@ -291,10 +300,10 @@ func (r *reader) init(h *fileBlockHeader) error {
 	if h == nil {
 		return io.EOF
 	}
-	if !h.first {
-		return ErrInvalidFileBlock
+	err := r.pr.init(h)
+	if err != nil {
+		return err
 	}
-	r.pr.init(h)
 	// start with packed file reader
 	r.r = r.pr
 	// check for encryption
