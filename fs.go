@@ -59,18 +59,6 @@ func newDummyDirEntry(name string) dummyDirEntry {
 	return dummyDirEntry{name: path.Base(name)}
 }
 
-type file struct {
-	reader
-}
-
-func (f *file) Stat() (fs.FileInfo, error) {
-	return fileInfo{h: f.pr.h}, nil
-}
-
-func (f *file) Close() error {
-	return f.pr.Close()
-}
-
 type dirFile struct {
 	name  string
 	info  fs.FileInfo
@@ -144,18 +132,8 @@ func (rfs *RarFS) Open(name string) (fs.File, error) {
 			files: node.dirEntryList(),
 		}, nil
 	}
-	if h.Solid {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: ErrSolidOpen}
-	}
-	v, err := rfs.vm.openBlockOffset(h, 0)
+	f, err := openArchiveFile(rfs.vm, h)
 	if err != nil {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
-	}
-	f := &file{}
-	f.reader = newReader(v)
-	err = f.reader.init(h)
-	if err != nil {
-		v.Close()
 		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
 	}
 	return f, nil
@@ -182,30 +160,24 @@ func (rfs *RarFS) ReadFile(name string) ([]byte, error) {
 	}
 	node := rfs.ftree[name]
 	if node == nil {
-		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrNotExist}
+		return nil, &fs.PathError{Op: "readfile", Path: name, Err: fs.ErrNotExist}
 	}
 	h := node.h
 	if h == nil || h.IsDir {
 		return []byte{}, nil
 	}
 
-	v, err := rfs.vm.openBlockOffset(h, 0)
+	f, err := openArchiveFile(rfs.vm, h)
 	if err != nil {
-		return nil, &fs.PathError{Op: "readdir", Path: name, Err: err}
+		return nil, &fs.PathError{Op: "readfile", Path: name, Err: err}
 	}
-	defer v.Close()
+	defer f.Close()
 
-	reader := newReader(v)
-	err = reader.init(h)
-	if err != nil {
-		v.Close()
-		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
-	}
 	if h.UnKnownSize {
-		return io.ReadAll(&reader)
+		return io.ReadAll(f)
 	}
 	buf := make([]byte, h.UnPackedSize)
-	_, err = io.ReadFull(&reader, buf)
+	_, err = io.ReadFull(f, buf)
 	return buf, err
 }
 
@@ -250,16 +222,16 @@ func (rfs *RarFS) Sub(dir string) (fs.FS, error) {
 }
 
 func OpenFS(name string, opts ...Option) (*RarFS, error) {
-	r, err := OpenReader(name, opts...)
+	v, err := openVolume(name, opts)
 	if err != nil {
 		return nil, err
 	}
-	pr := r.pr
+	pr := newPackedFileReader(v)
 	defer pr.Close()
 
 	rfs := &RarFS{
 		ftree: map[string]*fsNode{},
-		vm:    pr.v.vm,
+		vm:    v.vm,
 	}
 	for {
 		h, err := pr.nextFile()

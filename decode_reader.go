@@ -2,6 +2,7 @@ package rardecode
 
 import (
 	"errors"
+	"io"
 )
 
 const (
@@ -35,13 +36,14 @@ type decoder interface {
 
 // decodeReader implements io.Reader for decoding compressed data in RAR archives.
 type decodeReader struct {
+	archiveFile
 	tot    int64          // total bytes read from window
 	outbuf []byte         // buffered output
 	buf    []byte         // filter buffer
 	fl     []*filterBlock // list of filters each with offset relative to previous in list
 	dec    decoder        // decoder being used to unpack file
 	err    error          // current decoder error output
-	br     byteReader
+	solid  bool           // archive is solid
 
 	win  []byte // sliding window buffer
 	size int    // win length
@@ -49,14 +51,15 @@ type decodeReader struct {
 	w    int    // index in win for writes (end)
 }
 
-func (d *decodeReader) init(r byteReader, ver int, size int, reset bool, unPackedSize int64) error {
+func (d *decodeReader) init(f archiveFile, ver int, size int, reset, arcSolid bool, unPackedSize int64) error {
 	d.outbuf = nil
 	d.tot = 0
 	d.err = nil
+	d.solid = arcSolid
 	if reset {
 		d.fl = nil
 	}
-	d.br = r
+	d.archiveFile = f
 
 	// initialize window
 	size = max(size, minWindowSize)
@@ -92,7 +95,7 @@ func (d *decodeReader) init(r byteReader, ver int, size int, reset bool, unPacke
 	} else if d.dec.version() != ver {
 		return ErrMultipleDecoders
 	}
-	d.dec.init(r, reset, unPackedSize, ver)
+	d.dec.init(f, reset, unPackedSize, ver)
 	return nil
 }
 
@@ -322,4 +325,14 @@ func (d *decodeReader) ReadByte() (byte, error) {
 	b := d.outbuf[0]
 	d.outbuf = d.outbuf[1:]
 	return b, nil
+}
+
+func (d *decodeReader) nextFile() (*fileBlockHeader, error) {
+	if d.solid {
+		_, err := io.Copy(io.Discard, d)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return d.archiveFile.nextFile()
 }

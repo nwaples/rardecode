@@ -31,7 +31,6 @@ type options struct {
 	bsize int     // size to be use for bufio.Reader
 	fs    fs.FS   // filesystem to use to open files
 	pass  *string // password for encrypted volumes
-	file  string  // filename for volume
 }
 
 // An Option is used for optional archive extraction settings.
@@ -64,6 +63,9 @@ func getOptions(opts []Option) *options {
 			pw := string(runes[:maxPassword])
 			opt.pass = &pw
 		}
+	}
+	if opt.fs == nil {
+		opt.fs = defaultFS
 	}
 	return opt
 }
@@ -401,17 +403,13 @@ func (vm *volumeManager) openBlockOffset(h *fileBlockHeader, offset int64) (*vol
 	return v, nil
 }
 
-func newVolumeManager(opt *options) *volumeManager {
-	dir, file := filepath.Split(opt.file)
-	return &volumeManager{
+func openVolume(filename string, opts []Option) (*volume, error) {
+	dir, file := filepath.Split(filename)
+	vm := &volumeManager{
 		dir:   dir,
 		files: []string{file},
-		opt:   opt,
+		opt:   getOptions(opts),
 	}
-}
-
-func openVolume(opt *options) (*volume, error) {
-	vm := newVolumeManager(opt)
 	v, err := vm.newVolume(0)
 	if err != nil {
 		return nil, err
