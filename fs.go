@@ -81,9 +81,10 @@ func (d *dirFile) ReadDir(n int) ([]fs.DirEntry, error) {
 }
 
 type fsNode struct {
-	name  string
-	h     *fileBlockHeader
-	files []*fsNode
+	name   string
+	h      *fileBlockHeader
+	blocks []*fileBlockHeader
+	files  []*fsNode
 }
 
 func (n *fsNode) fileInfo() fs.FileInfo {
@@ -221,26 +222,45 @@ func (rfs *RarFS) Sub(dir string) (fs.FS, error) {
 	return newFS, nil
 }
 
-func OpenFS(name string, opts ...Option) (*RarFS, error) {
+func listFileBlocks(name string, opts ...Option) (*volumeManager, [][]*fileBlockHeader, error) {
 	v, err := openVolume(name, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	pr := &packedFileReader{v: v}
+	defer pr.Close()
+
+	fileBlocks := [][]*fileBlockHeader{}
+	for {
+		_, err := pr.nextFile()
+		if err != nil {
+			if err == io.EOF {
+				return v.vm, fileBlocks, nil
+			}
+			return nil, nil, err
+		}
+		for err == nil {
+			err = pr.nextBlock()
+		}
+		if err != io.EOF {
+			return nil, nil, err
+		}
+		fileBlocks = append(fileBlocks, pr.blocks)
+	}
+}
+
+func OpenFS(name string, opts ...Option) (*RarFS, error) {
+	vm, fileBlocks, err := listFileBlocks(name, opts...)
 	if err != nil {
 		return nil, err
 	}
-	pr := newPackedFileReader(v)
-	defer pr.Close()
 
 	rfs := &RarFS{
 		ftree: map[string]*fsNode{},
-		vm:    v.vm,
+		vm:    vm,
 	}
-	for {
-		h, err := pr.nextFile()
-		if err != nil {
-			if err == io.EOF {
-				return rfs, nil
-			}
-			return nil, err
-		}
+	for _, blocks := range fileBlocks {
+		h := blocks[0]
 		fname := strings.TrimPrefix(path.Clean(h.Name), "/")
 		if !fs.ValidPath(fname) {
 			return nil, fmt.Errorf("rardecode: archived file has invalid path: %s", fname)
@@ -249,10 +269,11 @@ func OpenFS(name string, opts ...Option) (*RarFS, error) {
 		if node != nil {
 			if node.h == nil || node.h.Version < h.Version {
 				node.h = h
+				node.blocks = blocks
 			}
 			continue
 		}
-		rfs.ftree[fname] = &fsNode{h: h}
+		rfs.ftree[fname] = &fsNode{h: h, blocks: blocks}
 		prev := rfs.ftree[fname]
 		// add parent file nodes
 		for fname != "." {
@@ -269,4 +290,5 @@ func OpenFS(name string, opts ...Option) (*RarFS, error) {
 			prev = rfs.ftree[fname]
 		}
 	}
+	return rfs, nil
 }

@@ -87,6 +87,7 @@ type fileBlockHeader struct {
 	arcSolid  bool             // archive is solid
 	dataOff   int64            // offset to data for file block in archive volume
 	packedOff int64            // offset to data in packed file
+	blocknum  int              // number for current block in file
 	volnum    int              // archive volume number
 	winSize   int              // decode window size
 	hash      func() hash.Hash // hash used for file checksum

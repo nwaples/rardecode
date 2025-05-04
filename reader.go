@@ -105,24 +105,26 @@ type archiveFile interface {
 	byteReader
 	currFile() *fileBlockHeader
 	nextFile() (*fileBlockHeader, error)
-	newArchiveFile(h *fileBlockHeader) (archiveFile, error)
+	newArchiveFile(blocks ...*fileBlockHeader) (archiveFile, error)
 	Close() error
 	Stat() (fs.FileInfo, error)
 }
 
 // packedFileReader provides sequential access to packed files in a RAR archive.
 type packedFileReader struct {
-	v  *volume
-	h  *fileBlockHeader // current file header
-	dr *decodeReader
+	v      *volume
+	h      *fileBlockHeader // current file header
+	dr     *decodeReader
+	blocks []*fileBlockHeader
 }
 
-func (f *packedFileReader) init(h *fileBlockHeader) error {
+func (f *packedFileReader) init(blocks ...*fileBlockHeader) error {
+	h := blocks[0]
 	if !h.first {
 		return ErrInvalidFileBlock
 	}
-	h.packedOff = 0
 	f.h = h
+	f.blocks = blocks
 	return nil
 }
 
@@ -157,7 +159,11 @@ func (f *packedFileReader) nextBlock() error {
 		return ErrInvalidFileBlock
 	}
 	h.packedOff = f.h.packedOff + f.h.PackedSize
+	h.blocknum = f.h.blocknum + 1
 	f.h = h
+	if len(f.blocks) == h.blocknum {
+		f.blocks = append(f.blocks, h)
+	}
 	return nil
 }
 
@@ -213,11 +219,9 @@ func (f *packedFileReader) ReadByte() (byte, error) {
 	}
 }
 
-func (pr *packedFileReader) newArchiveFile(h *fileBlockHeader) (archiveFile, error) {
-	if h == nil {
-		return nil, io.EOF
-	}
-	err := pr.init(h)
+func (pr *packedFileReader) newArchiveFile(blocks ...*fileBlockHeader) (archiveFile, error) {
+	h := blocks[0]
+	err := pr.init(blocks...)
 	if err != nil {
 		return nil, err
 	}
@@ -348,7 +352,8 @@ func (cr *checksumReader) ReadByte() (byte, error) {
 	return b, err
 }
 
-func openArchiveFile(vm *volumeManager, h *fileBlockHeader) (archiveFile, error) {
+func openArchiveFile(vm *volumeManager, blocks ...*fileBlockHeader) (archiveFile, error) {
+	h := blocks[0]
 	if h.Solid {
 		return nil, ErrSolidOpen
 	}
@@ -357,7 +362,7 @@ func openArchiveFile(vm *volumeManager, h *fileBlockHeader) (archiveFile, error)
 		return nil, err
 	}
 	pr := newPackedFileReader(v)
-	f, err := pr.newArchiveFile(h)
+	f, err := pr.newArchiveFile(blocks...)
 	if err != nil {
 		v.Close()
 		return nil, err
@@ -434,8 +439,8 @@ func OpenReader(name string, opts ...Option) (*ReadCloser, error) {
 // File represents a file in a RAR archive
 type File struct {
 	FileHeader
-	h  *fileBlockHeader
-	vm *volumeManager
+	blocks []*fileBlockHeader
+	vm     *volumeManager
 }
 
 // Open returns an io.ReadCloser that provides access to the File's contents.
@@ -443,35 +448,24 @@ type File struct {
 // of the preceding files in the archive. Use OpenReader and Next to access Solid file
 // contents instead.
 func (f *File) Open() (io.ReadCloser, error) {
-	return openArchiveFile(f.vm, f.h)
+	return openArchiveFile(f.vm, f.blocks...)
 }
 
 // List returns a list of File's in the RAR archive specified by name.
 func List(name string, opts ...Option) ([]*File, error) {
-	v, err := openVolume(name, opts)
+	vm, fileBlocks, err := listFileBlocks(name, opts...)
 	if err != nil {
 		return nil, err
 	}
-	pr := newPackedFileReader(v)
-	defer pr.Close()
-
 	var fl []*File
-	for {
-		// get next file
-		h, err := pr.nextFile()
-		if err != nil {
-			if err == io.EOF {
-				return fl, nil
-			}
-			return nil, err
-		}
-
-		// save information for File
+	for _, blocks := range fileBlocks {
+		h := blocks[0]
 		f := &File{
 			FileHeader: h.FileHeader,
-			h:          h,
-			vm:         v.vm,
+			blocks:     blocks,
+			vm:         vm,
 		}
 		fl = append(fl, f)
 	}
+	return fl, nil
 }
