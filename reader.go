@@ -110,6 +110,14 @@ type archiveFile interface {
 	Stat() (fs.FileInfo, error)
 }
 
+type errorFile struct {
+	archiveFile
+	err error
+}
+
+func (ef *errorFile) ReadByte() (byte, error)    { return 0, ef.err }
+func (ef *errorFile) Read(p []byte) (int, error) { return 0, ef.err }
+
 // packedFileReader provides sequential access to packed files in a RAR archive.
 type packedFileReader struct {
 	v      *volume
@@ -228,8 +236,15 @@ func (pr *packedFileReader) newArchiveFile(blocks ...*fileBlockHeader) (archiveF
 	// start with packed file reader
 	r := archiveFile(pr)
 	// check for encryption
-	if h.genKeys != nil {
-		r = newAesDecryptFileReader(r, h.getKeys) // decrypt
+	if h.Encrypted {
+		if h.key == nil {
+			r = &errorFile{archiveFile: r, err: ErrArchivedFileEncrypted}
+		} else {
+			r, err = newAesDecryptFileReader(r, h.key, h.iv) // decrypt
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	// check for compression
 	if h.decVer > 0 {
@@ -301,11 +316,6 @@ func (cr *checksumReader) eofError() error {
 	// calculate file checksum
 	h := cr.currFile()
 	sum := cr.hash.Sum(nil)
-	if !h.first && h.genKeys != nil {
-		if err := h.genKeys(); err != nil {
-			return err
-		}
-	}
 	if len(h.hashKey) > 0 {
 		mac := hmac.New(sha256.New, h.hashKey)
 		_, _ = mac.Write(sum) // ignore error, should always succeed

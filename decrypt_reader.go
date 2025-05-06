@@ -9,22 +9,13 @@ import (
 // cipherBlockReader implements Block Mode decryption of an io.Reader object.
 type cipherBlockReader struct {
 	byteReader
-	mode    cipher.BlockMode
-	getMode func() (cipher.BlockMode, error)
-	inbuf   []byte // raw input blocks not yet decrypted
-	outbuf  []byte // output buffer used when output slice < block size
-	block   []byte // input/output buffer for a single block
+	mode   cipher.BlockMode
+	inbuf  []byte // raw input blocks not yet decrypted
+	outbuf []byte // output buffer used when output slice < block size
+	block  []byte // input/output buffer for a single block
 }
 
 func (cr *cipherBlockReader) fillOutbuf() error {
-	if cr.mode == nil {
-		var err error
-		cr.mode, err = cr.getMode()
-		if err != nil {
-			return err
-		}
-		cr.block = make([]byte, cr.mode.BlockSize())
-	}
 	l := len(cr.inbuf)
 	_, err := io.ReadFull(cr.byteReader, cr.block[l:])
 	if err != nil {
@@ -56,14 +47,6 @@ func (cr *cipherBlockReader) Read(p []byte) (int, error) {
 		n = copy(p, cr.outbuf)
 		cr.outbuf = cr.outbuf[n:]
 		return n, nil
-	}
-	if cr.mode == nil {
-		var err error
-		cr.mode, err = cr.getMode()
-		if err != nil {
-			return 0, err
-		}
-		cr.block = make([]byte, cr.mode.BlockSize())
 	}
 	blockSize := cr.mode.BlockSize()
 	if len(p) < blockSize {
@@ -99,24 +82,22 @@ func (cr *cipherBlockReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-func newCipherBlockReader(r byteReader, getMode func() (cipher.BlockMode, error)) *cipherBlockReader {
-	return &cipherBlockReader{byteReader: r, getMode: getMode}
+func newCipherBlockReader(r byteReader, mode cipher.BlockMode) *cipherBlockReader {
+	return &cipherBlockReader{
+		byteReader: r,
+		mode:       mode,
+		block:      make([]byte, mode.BlockSize()),
+	}
 }
 
 // newAesDecryptReader returns a cipherBlockReader that decrypts input from a given io.Reader using AES.
-func newAesDecryptReader(r byteReader, getKeys func() ([]byte, []byte, error)) *cipherBlockReader {
-	getMode := func() (cipher.BlockMode, error) {
-		key, iv, err := getKeys()
-		if err != nil {
-			return nil, err
-		}
-		block, err := aes.NewCipher(key)
-		if err != nil {
-			return nil, err
-		}
-		return cipher.NewCBCDecrypter(block, iv), nil
+func newAesDecryptReader(r byteReader, key, iv []byte) (*cipherBlockReader, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
 	}
-	return newCipherBlockReader(r, getMode)
+	mode := cipher.NewCBCDecrypter(block, iv)
+	return newCipherBlockReader(r, mode), nil
 }
 
 type cipherBlockFileReader struct {
@@ -132,7 +113,10 @@ func (cr *cipherBlockFileReader) Read(p []byte) (int, error) {
 	return cr.cbr.Read(p)
 }
 
-func newAesDecryptFileReader(r archiveFile, getKeys func() ([]byte, []byte, error)) *cipherBlockFileReader {
-	cbr := newAesDecryptReader(r, getKeys)
-	return &cipherBlockFileReader{archiveFile: r, cbr: cbr}
+func newAesDecryptFileReader(r archiveFile, key, iv []byte) (*cipherBlockFileReader, error) {
+	cbr, err := newAesDecryptReader(r, key, iv)
+	if err != nil {
+		return nil, err
+	}
+	return &cipherBlockFileReader{archiveFile: r, cbr: cbr}, nil
 }

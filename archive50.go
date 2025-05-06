@@ -235,23 +235,16 @@ func (a *archive50) parseFileEncryptionRecord(b readBuf, f *fileBlockHeader) err
 	useMac := flags&file5EncUseMac > 0
 	// only need to generate keys for first block or
 	// last block if it has an optional hash key
-	if !(f.first || (f.last && useMac)) {
+	if a.pass == nil || !(f.first || (f.last && useMac)) {
 		return nil
 	}
-	f.genKeys = func() error {
-		if a.pass == nil {
-			return ErrArchivedFileEncrypted
-		}
-		keys, err := a.getKeys(kdfCount, salt, check)
-		if err != nil {
-			return err
-		}
-
-		f.key = keys[0]
-		if useMac {
-			f.hashKey = keys[1]
-		}
-		return nil
+	keys, err := a.getKeys(kdfCount, salt, check)
+	if err != nil {
+		return err
+	}
+	f.key = keys[0]
+	if useMac {
+		f.hashKey = keys[1]
 	}
 	return nil
 }
@@ -487,12 +480,18 @@ func (a *archive50) parseArcBlock(h *blockHeader50) int {
 func (a *archive50) readBlockHeader(r byteReader) (*blockHeader50, error) {
 	if a.blockKey != nil {
 		// block is encrypted
+		if a.pass == nil {
+			return nil, ErrArchiveEncrypted
+		}
 		iv := make([]byte, 16)
 		_, err := io.ReadFull(r, iv)
 		if err != nil {
 			return nil, err
 		}
-		r = newAesDecryptReader(r, func() ([]byte, []byte, error) { return a.blockKey, iv, nil })
+		r, err = newAesDecryptReader(r, a.blockKey, iv)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// find the header size
 	sizeBuf := make([]byte, 7)

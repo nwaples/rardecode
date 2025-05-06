@@ -324,14 +324,8 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 		return f, nil
 	}
 	// fields only needed for first block in a file
-	if h.flags&fileEncrypted > 0 && len(salt) == saltSize {
-		f.genKeys = func() error {
-			if a.pass == nil {
-				return ErrArchivedFileEncrypted
-			}
-			f.key, f.iv = a.getKeys(salt)
-			return nil
-		}
+	if f.Encrypted && len(salt) == saltSize && a.pass != nil {
+		f.key, f.iv = a.getKeys(salt)
 	}
 	f.hash = newLittleEndianCRC32
 	if method != 0 {
@@ -364,13 +358,19 @@ func (a *archive15) parseArcBlock(h *blockHeader15) error {
 // It will return io.EOF if there were no bytes read.
 func (a *archive15) readBlockHeader(r byteReader) (*blockHeader15, error) {
 	if a.encrypted {
+		if a.pass == nil {
+			return nil, ErrArchiveEncrypted
+		}
 		salt := make([]byte, saltSize)
 		_, err := io.ReadFull(r, salt)
 		if err != nil {
 			return nil, err
 		}
 		key, iv := a.getKeys(salt)
-		r = newAesDecryptReader(r, func() ([]byte, []byte, error) { return key, iv, nil })
+		r, err = newAesDecryptReader(r, key, iv)
+		if err != nil {
+			return nil, err
+		}
 	}
 	sizeBuf := make([]byte, 7)
 	_, err := io.ReadFull(r, sizeBuf)

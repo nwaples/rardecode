@@ -96,18 +96,7 @@ type fileBlockHeader struct {
 	decVer    int              // decoder to use for file
 	key       []byte           // key for AES, non-empty if file encrypted
 	iv        []byte           // iv for AES, non-empty if file encrypted
-	genKeys   func() error     // generates key & iv fields
 	FileHeader
-}
-
-func (f *fileBlockHeader) getKeys() (key, iv []byte, err error) {
-	if f.key == nil {
-		err := f.genKeys()
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	return f.key, f.iv, nil
 }
 
 // archiveBlockReader returns the next fileBlockHeader in an archive volume.
