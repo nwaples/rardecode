@@ -315,11 +315,18 @@ func fixFileExtension(file string) string {
 }
 
 type volumeManager struct {
-	dir   string   // current volume directory path
+	dir string // current volume directory path
+	opt *options
+
+	mu    sync.Mutex
 	files []string // file names for each volume
 	old   bool     // uses old naming scheme
-	opt   *options
-	mu    sync.Mutex
+}
+
+func (vm *volumeManager) Files() []string {
+	vm.mu.Lock()
+	defer vm.mu.Unlock()
+	return vm.files
 }
 
 func (vm *volumeManager) tryNewName(file string) (fs.File, error) {

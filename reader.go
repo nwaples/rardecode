@@ -460,7 +460,7 @@ func (rc *ReadCloser) Close() error { return rc.f.Close() }
 // up to this point. This will include the current open volume if the archive is still
 // being processed.
 func (rc *ReadCloser) Volumes() []string {
-	return rc.vm.files
+	return rc.vm.Files()
 }
 
 // OpenReader opens a RAR archive specified by the name and returns a ReadCloser.
