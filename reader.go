@@ -313,7 +313,7 @@ func (pr *packedFileReader) newArchiveFile(blocks *fileBlockList) (archiveFile, 
 	}
 	if h.UnPackedSize >= 0 && !h.UnKnownSize {
 		// Limit reading to UnPackedSize as there may be padding
-		r = &limitedReader{r, h.UnPackedSize, ErrShortFile}
+		r = &limitedReader{archiveFile: r, size: h.UnPackedSize}
 	}
 	if h.hash != nil && !pr.opt.skipCheck {
 		r = newChecksumReader(r, h.hash(), blocks.removeFileHash)
@@ -327,37 +327,41 @@ func newPackedFileReader(v volume, opts *options) archiveFile {
 
 type limitedReader struct {
 	archiveFile
-	n        int64 // bytes remaining
-	shortErr error // error returned when r returns io.EOF with n > 0
+	size   int64
+	offset int64
 }
 
 func (l *limitedReader) Read(p []byte) (int, error) {
-	if l.n <= 0 {
+	diff := l.size - l.offset
+	if diff <= 0 {
 		return 0, io.EOF
 	}
-	if int64(len(p)) > l.n {
-		p = p[0:l.n]
+	if int64(len(p)) > diff {
+		p = p[0:diff]
 	}
 	n, err := l.archiveFile.Read(p)
-	l.n -= int64(n)
-	if err == io.EOF && l.n > 0 {
-		return n, l.shortErr
+	l.offset += int64(n)
+	if err == io.EOF {
+		if l.offset < l.size {
+			return n, ErrShortFile
+		}
+		return n, nil
 	}
 	return n, err
 }
 
 func (l *limitedReader) ReadByte() (byte, error) {
-	if l.n <= 0 {
+	if l.offset >= l.size {
 		return 0, io.EOF
 	}
 	b, err := l.archiveFile.ReadByte()
 	if err != nil {
-		if err == io.EOF && l.n > 0 {
-			return 0, l.shortErr
+		if err == io.EOF {
+			return 0, ErrShortFile
 		}
 		return 0, err
 	}
-	l.n--
+	l.offset++
 	return b, nil
 }
 
