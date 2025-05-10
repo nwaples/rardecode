@@ -138,7 +138,19 @@ func (fl *fileBlockList) addBlock(h *fileBlockHeader) {
 	}
 }
 
-func (fl *fileBlockList) removeHash() {
+func (fl *fileBlockList) isDir() bool {
+	fl.mu.Lock()
+	defer fl.mu.Unlock()
+	return fl.blocks[0].IsDir
+}
+
+func (fl *fileBlockList) hasFileHash() bool {
+	fl.mu.Lock()
+	defer fl.mu.Unlock()
+	return fl.blocks[0].hash != nil
+}
+
+func (fl *fileBlockList) removeFileHash() {
 	fl.mu.Lock()
 	defer fl.mu.Unlock()
 	h := *fl.blocks[0]
@@ -156,6 +168,7 @@ type packedFileReader struct {
 	h      *fileBlockHeader // current file header
 	dr     *decodeReader
 	blocks *fileBlockList
+	opt    *options
 }
 
 func (f *packedFileReader) init(blocks *fileBlockList) error {
@@ -292,14 +305,14 @@ func (pr *packedFileReader) newArchiveFile(blocks *fileBlockList) (archiveFile, 
 		// Limit reading to UnPackedSize as there may be padding
 		r = &limitedReader{r, h.UnPackedSize, ErrShortFile}
 	}
-	if h.hash != nil {
-		r = newChecksumReader(r, h.hash(), blocks.removeHash)
+	if h.hash != nil && !pr.opt.skipCheck {
+		r = newChecksumReader(r, h.hash(), blocks.removeFileHash)
 	}
 	return r, nil
 }
 
-func newPackedFileReader(v *volume) archiveFile {
-	return &packedFileReader{v: v}
+func newPackedFileReader(v *volume, opts *options) archiveFile {
+	return &packedFileReader{v: v, opt: opts}
 }
 
 type limitedReader struct {
@@ -429,8 +442,8 @@ func (r *Reader) Next() (*FileHeader, error) {
 	return &h.FileHeader, nil
 }
 
-func newReader(v *volume) Reader {
-	pr := newPackedFileReader(v)
+func newReader(v *volume, opts *options) Reader {
+	pr := newPackedFileReader(v, opts)
 	return Reader{f: pr}
 }
 
@@ -443,7 +456,7 @@ func NewReader(r io.Reader, opts ...Option) (*Reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	rdr := newReader(v)
+	rdr := newReader(v, options)
 	return &rdr, nil
 }
 
@@ -465,12 +478,13 @@ func (rc *ReadCloser) Volumes() []string {
 
 // OpenReader opens a RAR archive specified by the name and returns a ReadCloser.
 func OpenReader(name string, opts ...Option) (*ReadCloser, error) {
-	v, err := openVolume(name, opts)
+	options := getOptions(opts)
+	v, err := openVolume(name, options)
 	if err != nil {
 		return nil, err
 	}
 	rc := &ReadCloser{vm: v.vm}
-	rc.Reader = newReader(v)
+	rc.Reader = newReader(v, options)
 	return rc, nil
 }
 
@@ -491,7 +505,7 @@ func (f *File) Open() (io.ReadCloser, error) {
 
 // List returns a list of File's in the RAR archive specified by name.
 func List(name string, opts ...Option) ([]*File, error) {
-	vm, fileBlocks, err := listFileBlocks(name, opts...)
+	vm, fileBlocks, err := listFileBlocks(name, opts)
 	if err != nil {
 		return nil, err
 	}

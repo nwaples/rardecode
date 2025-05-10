@@ -28,9 +28,11 @@ func (fs osFS) Open(name string) (fs.File, error) {
 }
 
 type options struct {
-	bsize int     // size to be use for bufio.Reader
-	fs    fs.FS   // filesystem to use to open files
-	pass  *string // password for encrypted volumes
+	bsize     int     // size to be use for bufio.Reader
+	fs        fs.FS   // filesystem to use to open files
+	pass      *string // password for encrypted volumes
+	skipCheck bool
+	openCheck bool
 }
 
 // An Option is used for optional archive extraction settings.
@@ -50,6 +52,12 @@ func FileSystem(fs fs.FS) Option {
 func Password(pass string) Option {
 	return func(o *options) { o.pass = &pass }
 }
+
+// SkipCheck sets archive files checksum not to be checked.
+func SkipCheck(o *options) { o.skipCheck = true }
+
+// OpenFSCheck flags the archive files to be checked on Open or List.
+func OpenFSCheck(o *options) { o.openCheck = true }
 
 func getOptions(opts []Option) *options {
 	opt := &options{}
@@ -419,7 +427,7 @@ func (vm *volumeManager) openArchiveFile(blocks *fileBlockList) (archiveFile, er
 	if err != nil {
 		return nil, err
 	}
-	pr := newPackedFileReader(v)
+	pr := newPackedFileReader(v, vm.opt)
 	f, err := pr.newArchiveFile(blocks)
 	if err != nil {
 		v.Close()
@@ -428,12 +436,12 @@ func (vm *volumeManager) openArchiveFile(blocks *fileBlockList) (archiveFile, er
 	return f, nil
 }
 
-func openVolume(filename string, opts []Option) (*volume, error) {
+func openVolume(filename string, opts *options) (*volume, error) {
 	dir, file := filepath.Split(filename)
 	vm := &volumeManager{
 		dir:   dir,
 		files: []string{file},
-		opt:   getOptions(opts),
+		opt:   opts,
 	}
 	v, err := vm.newVolume(0)
 	if err != nil {
