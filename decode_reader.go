@@ -327,7 +327,7 @@ func (d *decodeReader) ReadByte() (byte, error) {
 	return b, nil
 }
 
-func (d *decodeReader) nextFile() (*fileBlockHeader, error) {
+func (d *decodeReader) nextFile() (*fileBlockList, error) {
 	if d.solid {
 		_, err := io.Copy(io.Discard, d)
 		if err != nil {

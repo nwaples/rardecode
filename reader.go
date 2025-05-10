@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -104,8 +105,8 @@ type byteReader interface {
 type archiveFile interface {
 	byteReader
 	currFile() *fileBlockHeader
-	nextFile() (*fileBlockHeader, error)
-	newArchiveFile(blocks ...*fileBlockHeader) (archiveFile, error)
+	nextFile() (*fileBlockList, error)
+	newArchiveFile(blocks *fileBlockList) (archiveFile, error)
 	Close() error
 	Stat() (fs.FileInfo, error)
 }
@@ -118,19 +119,47 @@ type errorFile struct {
 func (ef *errorFile) ReadByte() (byte, error)    { return 0, ef.err }
 func (ef *errorFile) Read(p []byte) (int, error) { return 0, ef.err }
 
+type fileBlockList struct {
+	mu     sync.Mutex
+	blocks []*fileBlockHeader
+}
+
+func (fl *fileBlockList) firstBlock() *fileBlockHeader {
+	fl.mu.Lock()
+	defer fl.mu.Unlock()
+	return fl.blocks[0]
+}
+
+func (fl *fileBlockList) addBlock(h *fileBlockHeader) {
+	fl.mu.Lock()
+	defer fl.mu.Unlock()
+	if len(fl.blocks) == h.blocknum {
+		fl.blocks = append(fl.blocks, h)
+	}
+}
+
+func (fl *fileBlockList) removeHash() {
+	fl.mu.Lock()
+	defer fl.mu.Unlock()
+	h := *fl.blocks[0]
+	h.hash = nil
+	fl.blocks[0] = &h
+}
+
+func newFileBlockList(blocks ...*fileBlockHeader) *fileBlockList {
+	return &fileBlockList{blocks: blocks}
+}
+
 // packedFileReader provides sequential access to packed files in a RAR archive.
 type packedFileReader struct {
 	v      *volume
 	h      *fileBlockHeader // current file header
 	dr     *decodeReader
-	blocks []*fileBlockHeader
+	blocks *fileBlockList
 }
 
-func (f *packedFileReader) init(blocks ...*fileBlockHeader) error {
-	h := blocks[0]
-	if !h.first {
-		return ErrInvalidFileBlock
-	}
+func (f *packedFileReader) init(blocks *fileBlockList) error {
+	h := blocks.firstBlock()
 	f.h = h
 	f.blocks = blocks
 	return nil
@@ -169,14 +198,12 @@ func (f *packedFileReader) nextBlock() error {
 	h.packedOff = f.h.packedOff + f.h.PackedSize
 	h.blocknum = f.h.blocknum + 1
 	f.h = h
-	if len(f.blocks) == h.blocknum {
-		f.blocks = append(f.blocks, h)
-	}
+	f.blocks.addBlock(h)
 	return nil
 }
 
 // next advances to the next packed file in the RAR archive.
-func (f *packedFileReader) nextFile() (*fileBlockHeader, error) {
+func (f *packedFileReader) nextFile() (*fileBlockList, error) {
 	// skip to last block in current file
 	var err error
 	for err == nil {
@@ -189,11 +216,15 @@ func (f *packedFileReader) nextFile() (*fileBlockHeader, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = f.init(h)
+	if !h.first {
+		return nil, ErrInvalidFileBlock
+	}
+	blocks := newFileBlockList(h)
+	err = f.init(blocks)
 	if err != nil {
 		return nil, err
 	}
-	return f.h, nil
+	return blocks, nil
 }
 
 func (f *packedFileReader) currFile() *fileBlockHeader { return f.h }
@@ -227,9 +258,9 @@ func (f *packedFileReader) ReadByte() (byte, error) {
 	}
 }
 
-func (pr *packedFileReader) newArchiveFile(blocks ...*fileBlockHeader) (archiveFile, error) {
-	h := blocks[0]
-	err := pr.init(blocks...)
+func (pr *packedFileReader) newArchiveFile(blocks *fileBlockList) (archiveFile, error) {
+	h := blocks.firstBlock()
+	err := pr.init(blocks)
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +293,7 @@ func (pr *packedFileReader) newArchiveFile(blocks ...*fileBlockHeader) (archiveF
 		r = &limitedReader{r, h.UnPackedSize, ErrShortFile}
 	}
 	if h.hash != nil {
-		r = &checksumReader{r, h.hash()}
+		r = newChecksumReader(r, h.hash(), blocks.removeHash)
 	}
 	return r, nil
 }
@@ -309,10 +340,15 @@ func (l *limitedReader) ReadByte() (byte, error) {
 
 type checksumReader struct {
 	archiveFile
-	hash hash.Hash
+	hash    hash.Hash
+	success func()
+	eofErr  error
 }
 
 func (cr *checksumReader) eofError() error {
+	if cr.eofErr != nil {
+		return cr.eofErr
+	}
 	// calculate file checksum
 	h := cr.currFile()
 	sum := cr.hash.Sum(nil)
@@ -329,9 +365,14 @@ func (cr *checksumReader) eofError() error {
 		}
 	}
 	if !bytes.Equal(sum, h.sum) {
-		return ErrBadFileChecksum
+		cr.eofErr = ErrBadFileChecksum
+	} else {
+		cr.eofErr = io.EOF
+		if cr.success != nil {
+			cr.success()
+		}
 	}
-	return io.EOF
+	return cr.eofErr
 }
 
 func (cr *checksumReader) Read(p []byte) (int, error) {
@@ -362,8 +403,12 @@ func (cr *checksumReader) ReadByte() (byte, error) {
 	return b, err
 }
 
-func openArchiveFile(vm *volumeManager, blocks ...*fileBlockHeader) (archiveFile, error) {
-	h := blocks[0]
+func newChecksumReader(f archiveFile, h hash.Hash, success func()) *checksumReader {
+	return &checksumReader{archiveFile: f, hash: h, success: success}
+}
+
+func openArchiveFile(vm *volumeManager, blocks *fileBlockList) (archiveFile, error) {
+	h := blocks.firstBlock()
 	if h.Solid {
 		return nil, ErrSolidOpen
 	}
@@ -372,7 +417,7 @@ func openArchiveFile(vm *volumeManager, blocks ...*fileBlockHeader) (archiveFile
 		return nil, err
 	}
 	pr := newPackedFileReader(v)
-	f, err := pr.newArchiveFile(blocks...)
+	f, err := pr.newArchiveFile(blocks)
 	if err != nil {
 		v.Close()
 		return nil, err
@@ -390,14 +435,15 @@ func (r *Reader) ReadByte() (byte, error)    { return r.f.ReadByte() }
 
 // Next advances to the next file in the archive.
 func (r *Reader) Next() (*FileHeader, error) {
-	h, err := r.f.nextFile()
+	blocks, err := r.f.nextFile()
 	if err != nil {
 		return nil, err
 	}
-	r.f, err = r.f.newArchiveFile(h)
+	r.f, err = r.f.newArchiveFile(blocks)
 	if err != nil {
 		return nil, err
 	}
+	h := blocks.firstBlock()
 	return &h.FileHeader, nil
 }
 
@@ -449,7 +495,7 @@ func OpenReader(name string, opts ...Option) (*ReadCloser, error) {
 // File represents a file in a RAR archive
 type File struct {
 	FileHeader
-	blocks []*fileBlockHeader
+	blocks *fileBlockList
 	vm     *volumeManager
 }
 
@@ -458,7 +504,7 @@ type File struct {
 // of the preceding files in the archive. Use OpenReader and Next to access Solid file
 // contents instead.
 func (f *File) Open() (io.ReadCloser, error) {
-	return openArchiveFile(f.vm, f.blocks...)
+	return openArchiveFile(f.vm, f.blocks)
 }
 
 // List returns a list of File's in the RAR archive specified by name.
@@ -469,7 +515,7 @@ func List(name string, opts ...Option) ([]*File, error) {
 	}
 	var fl []*File
 	for _, blocks := range fileBlocks {
-		h := blocks[0]
+		h := blocks.firstBlock()
 		f := &File{
 			FileHeader: h.FileHeader,
 			blocks:     blocks,
