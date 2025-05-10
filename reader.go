@@ -407,24 +407,6 @@ func newChecksumReader(f archiveFile, h hash.Hash, success func()) *checksumRead
 	return &checksumReader{archiveFile: f, hash: h, success: success}
 }
 
-func openArchiveFile(vm *volumeManager, blocks *fileBlockList) (archiveFile, error) {
-	h := blocks.firstBlock()
-	if h.Solid {
-		return nil, ErrSolidOpen
-	}
-	v, err := vm.openBlockOffset(h, 0)
-	if err != nil {
-		return nil, err
-	}
-	pr := newPackedFileReader(v)
-	f, err := pr.newArchiveFile(blocks)
-	if err != nil {
-		v.Close()
-		return nil, err
-	}
-	return f, nil
-}
-
 // Reader provides sequential access to files in a RAR archive.
 type Reader struct {
 	f archiveFile
@@ -504,7 +486,7 @@ type File struct {
 // of the preceding files in the archive. Use OpenReader and Next to access Solid file
 // contents instead.
 func (f *File) Open() (io.ReadCloser, error) {
-	return openArchiveFile(f.vm, f.blocks)
+	return f.vm.openArchiveFile(f.blocks)
 }
 
 // List returns a list of File's in the RAR archive specified by name.

@@ -403,6 +403,24 @@ func (vm *volumeManager) openBlockOffset(h *fileBlockHeader, offset int64) (*vol
 	return v, nil
 }
 
+func (vm *volumeManager) openArchiveFile(blocks *fileBlockList) (archiveFile, error) {
+	h := blocks.firstBlock()
+	if h.Solid {
+		return nil, ErrSolidOpen
+	}
+	v, err := vm.openBlockOffset(h, 0)
+	if err != nil {
+		return nil, err
+	}
+	pr := newPackedFileReader(v)
+	f, err := pr.newArchiveFile(blocks)
+	if err != nil {
+		v.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
 func openVolume(filename string, opts []Option) (*volume, error) {
 	dir, file := filepath.Split(filename)
 	vm := &volumeManager{

@@ -125,6 +125,10 @@ type RarFS struct {
 	ftree map[string]*fsNode
 }
 
+func (rfs *RarFS) openArchiveFile(blocks *fileBlockList) (archiveFile, error) {
+	return rfs.vm.openArchiveFile(blocks)
+}
+
 func (rfs *RarFS) Open(name string) (fs.File, error) {
 	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
@@ -141,7 +145,7 @@ func (rfs *RarFS) Open(name string) (fs.File, error) {
 			files: node.dirEntryList(),
 		}, nil
 	}
-	f, err := openArchiveFile(rfs.vm, node.blocks)
+	f, err := rfs.openArchiveFile(node.blocks)
 	if err != nil {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
 	}
@@ -176,7 +180,7 @@ func (rfs *RarFS) ReadFile(name string) ([]byte, error) {
 		return []byte{}, nil
 	}
 
-	f, err := openArchiveFile(rfs.vm, node.blocks)
+	f, err := rfs.openArchiveFile(node.blocks)
 	if err != nil {
 		return nil, &fs.PathError{Op: "readfile", Path: name, Err: err}
 	}
@@ -205,7 +209,7 @@ func (rfs *RarFS) Check(name string) error {
 	if h.hash == nil {
 		return nil
 	}
-	f, err := openArchiveFile(rfs.vm, node.blocks)
+	f, err := rfs.openArchiveFile(node.blocks)
 	if err != nil {
 		return &fs.PathError{Op: "check", Path: name, Err: err}
 	}
@@ -262,7 +266,7 @@ func listFileBlocks(name string, opts ...Option) (*volumeManager, []*fileBlockLi
 	if err != nil {
 		return nil, nil, err
 	}
-	pr := &packedFileReader{v: v}
+	pr := newPackedFileReader(v)
 	defer pr.Close()
 
 	fileBlocks := []*fileBlockList{}
@@ -272,12 +276,6 @@ func listFileBlocks(name string, opts ...Option) (*volumeManager, []*fileBlockLi
 			if err == io.EOF {
 				return v.vm, fileBlocks, nil
 			}
-			return nil, nil, err
-		}
-		for err == nil {
-			err = pr.nextBlock()
-		}
-		if err != io.EOF {
 			return nil, nil, err
 		}
 		fileBlocks = append(fileBlocks, blocks)
