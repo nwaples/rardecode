@@ -24,7 +24,7 @@ var (
 	ErrDecoderOutOfData      = errors.New("rardecode: decoder expected more data than is in packed file")
 	ErrArchiveEncrypted      = errors.New("rardecode: archive encrypted, password required")
 	ErrArchivedFileEncrypted = errors.New("rardecode: archived files encrypted, password required")
-	errVolumeEnd             = errors.New("rardecode: archive volume end")
+	ErrMultiVolume           = errors.New("rardecode: multi-volume archive continues in next file")
 	errVolumeOrArchiveEnd    = errors.New("rardecode: archive or volume end")
 )
 

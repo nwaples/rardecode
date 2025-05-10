@@ -467,7 +467,7 @@ func (a *archive15) nextBlock(br *bufVolumeReader) (*fileBlockHeader, error) {
 			if h.flags&endArcNotLast == 0 || !a.multi {
 				return nil, io.EOF
 			}
-			return nil, errVolumeEnd
+			return nil, ErrMultiVolume
 		default:
 			if h.dataSize > 0 {
 				err = br.Discard(h.dataSize) // skip over block data

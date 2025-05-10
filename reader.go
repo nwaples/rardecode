@@ -164,7 +164,7 @@ func newFileBlockList(blocks ...*fileBlockHeader) *fileBlockList {
 
 // packedFileReader provides sequential access to packed files in a RAR archive.
 type packedFileReader struct {
-	v      *volume
+	v      volume
 	h      *fileBlockHeader // current file header
 	dr     *decodeReader
 	blocks *fileBlockList
@@ -178,7 +178,12 @@ func (f *packedFileReader) init(blocks *fileBlockList) error {
 	return nil
 }
 
-func (f *packedFileReader) Close() error { return f.v.Close() }
+func (f *packedFileReader) Close() error {
+	if cl, ok := f.v.(io.Closer); ok {
+		return cl.Close()
+	}
+	return nil
+}
 
 func (f *packedFileReader) Stat() (fs.FileInfo, error) {
 	if f.h == nil {
@@ -202,6 +207,8 @@ func (f *packedFileReader) nextBlock() error {
 		if err == io.EOF {
 			// archive ended, but file hasn't
 			return ErrUnexpectedArcEnd
+		} else if err == errVolumeOrArchiveEnd {
+			return ErrMultiVolume
 		}
 		return err
 	}
@@ -227,6 +234,9 @@ func (f *packedFileReader) nextFile() (*fileBlockList, error) {
 	}
 	h, err := f.v.nextBlock() // get next file block
 	if err != nil {
+		if err == errVolumeOrArchiveEnd {
+			err = io.EOF
+		}
 		return nil, err
 	}
 	if !h.first {
@@ -311,7 +321,7 @@ func (pr *packedFileReader) newArchiveFile(blocks *fileBlockList) (archiveFile, 
 	return r, nil
 }
 
-func newPackedFileReader(v *volume, opts *options) archiveFile {
+func newPackedFileReader(v volume, opts *options) archiveFile {
 	return &packedFileReader{v: v, opt: opts}
 }
 
@@ -442,7 +452,7 @@ func (r *Reader) Next() (*FileHeader, error) {
 	return &h.FileHeader, nil
 }
 
-func newReader(v *volume, opts *options) Reader {
+func newReader(v volume, opts *options) Reader {
 	pr := newPackedFileReader(v, opts)
 	return Reader{f: pr}
 }

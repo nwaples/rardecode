@@ -78,20 +78,21 @@ func getOptions(opts []Option) *options {
 	return opt
 }
 
-// volume extends a archiveBlockReader to be used across multiple
-// files in a multi-volume archive
-type volume struct {
+type volume interface {
+	byteReader
+	nextBlock() (*fileBlockHeader, error)
+}
+
+type readerVolume struct {
 	br  *bufVolumeReader // buffered reader for current volume file
 	n   int64            // bytes left in current block
 	num int              // current volume number
 	ver int              // archive file format version
-	cl  io.Closer
 	arc archiveBlockReader
-	vm  *volumeManager
 	opt *options
 }
 
-func (v *volume) init(r io.Reader, volnum int) error {
+func (v *readerVolume) init(r io.Reader, volnum int) error {
 	var err error
 	if v.br == nil {
 		v.br, err = newBufVolumeReader(r, v.opt.bsize)
@@ -125,73 +126,25 @@ func (v *volume) init(r io.Reader, volnum int) error {
 	return nil
 }
 
-func (v *volume) Close() error {
-	if v.cl != nil {
-		err := v.cl.Close()
-		v.cl = nil
-		return err
-	}
-	return nil
-}
-
-func (v *volume) open(volnum int) error {
-	if v.vm == nil {
-		return ErrFileNameRequired
-	}
-	err := v.Close()
-	if err != nil {
-		return err
-	}
-	f, err := v.vm.openVolumeFile(volnum)
-	if err != nil {
-		return err
-	}
-	err = v.init(f, volnum)
-	if err != nil {
-		f.Close()
-		return err
-	}
-	v.cl = f
-	return nil
-}
-
-func (v *volume) nextBlock() (*fileBlockHeader, error) {
+func (v *readerVolume) nextBlock() (*fileBlockHeader, error) {
 	if v.n > 0 {
 		err := v.br.Discard(v.n)
 		if err != nil {
 			return nil, err
 		}
+		v.n = 0
 	}
-	for {
-		f, err := v.arc.nextBlock(v.br)
-		if err == nil {
-			f.volnum = v.num
-			f.dataOff = v.br.off
-			v.n = f.PackedSize
-			return f, nil
-		}
-		nextVol := v.num + 1
-		if err == errVolumeEnd {
-			err = v.open(nextVol)
-			if err != nil {
-				return nil, err
-			}
-		} else if err == errVolumeOrArchiveEnd {
-			err = v.open(nextVol)
-			if err != nil {
-				// new volume doesnt exist, assume end of archive
-				if errors.Is(err, fs.ErrNotExist) {
-					return nil, io.EOF
-				}
-				return nil, err
-			}
-		} else {
-			return nil, err
-		}
+	f, err := v.arc.nextBlock(v.br)
+	if err != nil {
+		return nil, err
 	}
+	f.volnum = v.num
+	f.dataOff = v.br.off
+	v.n = f.PackedSize
+	return f, nil
 }
 
-func (v *volume) Read(p []byte) (int, error) {
+func (v *readerVolume) Read(p []byte) (int, error) {
 	if v.n == 0 {
 		return 0, io.EOF
 	}
@@ -206,7 +159,7 @@ func (v *volume) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (v *volume) ReadByte() (byte, error) {
+func (v *readerVolume) ReadByte() (byte, error) {
 	if v.n == 0 {
 		return 0, io.EOF
 	}
@@ -219,13 +172,67 @@ func (v *volume) ReadByte() (byte, error) {
 	return b, err
 }
 
-func newVolume(r io.Reader, opt *options, volnum int) (*volume, error) {
-	v := &volume{opt: opt}
+func newVolume(r io.Reader, opt *options, volnum int) (*readerVolume, error) {
+	v := &readerVolume{opt: opt}
 	err := v.init(r, volnum)
 	if err != nil {
 		return nil, err
 	}
 	return v, nil
+}
+
+type fileVolume struct {
+	*readerVolume
+	f  fs.File
+	vm *volumeManager
+}
+
+func (v *fileVolume) Close() error { return v.f.Close() }
+
+func (v *fileVolume) open(volnum int) error {
+	err := v.Close()
+	if err != nil {
+		return err
+	}
+	f, err := v.vm.openVolumeFile(volnum)
+	if err != nil {
+		return err
+	}
+	err = v.readerVolume.init(f, volnum)
+	if err != nil {
+		f.Close()
+		return err
+	}
+	v.f = f
+	return nil
+}
+
+func (v *fileVolume) openNext() error { return v.open(v.num + 1) }
+
+func (v *fileVolume) nextBlock() (*fileBlockHeader, error) {
+	for {
+		h, err := v.readerVolume.nextBlock()
+		if err == nil {
+			return h, nil
+		}
+		if err == ErrMultiVolume {
+			err = v.openNext()
+			if err != nil {
+				return nil, err
+			}
+		} else if err == errVolumeOrArchiveEnd {
+			err = v.openNext()
+			if err != nil {
+				// new volume doesnt exist, assume end of archive
+				if errors.Is(err, fs.ErrNotExist) {
+					return nil, io.EOF
+				}
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
+	}
 }
 
 func nextNewVolName(file string) string {
@@ -385,7 +392,7 @@ func (vm *volumeManager) openVolumeFile(volnum int) (fs.File, error) {
 	return vm.opt.fs.Open(vm.dir + file)
 }
 
-func (vm *volumeManager) newVolume(volnum int) (*volume, error) {
+func (vm *volumeManager) newVolume(volnum int) (*fileVolume, error) {
 	f, err := vm.openVolumeFile(volnum)
 	if err != nil {
 		return nil, err
@@ -395,12 +402,15 @@ func (vm *volumeManager) newVolume(volnum int) (*volume, error) {
 		f.Close()
 		return nil, err
 	}
-	v.cl = f
-	v.vm = vm
-	return v, nil
+	mv := &fileVolume{
+		readerVolume: v,
+		f:            f,
+		vm:           vm,
+	}
+	return mv, nil
 }
 
-func (vm *volumeManager) openBlockOffset(h *fileBlockHeader, offset int64) (*volume, error) {
+func (vm *volumeManager) openBlockOffset(h *fileBlockHeader, offset int64) (*fileVolume, error) {
 	v, err := vm.newVolume(h.volnum)
 	if err != nil {
 		return nil, err
@@ -436,7 +446,7 @@ func (vm *volumeManager) openArchiveFile(blocks *fileBlockList) (archiveFile, er
 	return f, nil
 }
 
-func openVolume(filename string, opts *options) (*volume, error) {
+func openVolume(filename string, opts *options) (*fileVolume, error) {
 	dir, file := filepath.Split(filename)
 	vm := &volumeManager{
 		dir:   dir,
