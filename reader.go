@@ -167,6 +167,7 @@ type packedFileReader struct {
 	v      volume
 	h      *fileBlockHeader // current file header
 	dr     *decodeReader
+	offset int64
 	blocks *fileBlockList
 	opt    *options
 }
@@ -175,6 +176,7 @@ func (f *packedFileReader) init(blocks *fileBlockList) error {
 	h := blocks.firstBlock()
 	f.h = h
 	f.blocks = blocks
+	f.offset = 0
 	return nil
 }
 
@@ -218,6 +220,7 @@ func (f *packedFileReader) nextBlock() error {
 	h.packedOff = f.h.packedOff + f.h.PackedSize
 	h.blocknum = f.h.blocknum + 1
 	f.h = h
+	f.offset = h.dataOff
 	f.blocks.addBlock(h)
 	return nil
 }
@@ -260,6 +263,7 @@ func (f *packedFileReader) Read(p []byte) (int, error) {
 			err = f.nextBlock()
 		}
 		if n > 0 || err != nil {
+			f.offset += int64(n)
 			return n, err
 		}
 	}
@@ -269,6 +273,7 @@ func (f *packedFileReader) ReadByte() (byte, error) {
 	for {
 		b, err := f.v.ReadByte()
 		if err == nil {
+			f.offset++
 			return b, nil
 		}
 		if err == io.EOF {
