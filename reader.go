@@ -134,14 +134,32 @@ func (ef *errorFile) ReadByte() (byte, error)    { return 0, ef.err }
 func (ef *errorFile) Read(p []byte) (int, error) { return 0, ef.err }
 
 type fileBlockList struct {
-	mu     sync.Mutex
+	mu     sync.RWMutex
 	blocks []*fileBlockHeader
 }
 
 func (fl *fileBlockList) firstBlock() *fileBlockHeader {
-	fl.mu.Lock()
-	defer fl.mu.Unlock()
+	fl.mu.RLock()
+	defer fl.mu.RUnlock()
 	return fl.blocks[0]
+}
+
+func (fl *fileBlockList) lastBlock() *fileBlockHeader {
+	fl.mu.RLock()
+	defer fl.mu.RUnlock()
+	return fl.blocks[len(fl.blocks)-1]
+}
+
+func (fl *fileBlockList) findBlock(offset int64) *fileBlockHeader {
+	fl.mu.RLock()
+	defer fl.mu.RUnlock()
+	for _, h := range fl.blocks {
+		if offset < h.PackedSize || (offset == h.PackedSize && h.last) {
+			return h
+		}
+		offset -= h.PackedSize
+	}
+	return nil
 }
 
 func (fl *fileBlockList) addBlock(h *fileBlockHeader) {
@@ -153,14 +171,14 @@ func (fl *fileBlockList) addBlock(h *fileBlockHeader) {
 }
 
 func (fl *fileBlockList) isDir() bool {
-	fl.mu.Lock()
-	defer fl.mu.Unlock()
+	fl.mu.RLock()
+	defer fl.mu.RUnlock()
 	return fl.blocks[0].IsDir
 }
 
 func (fl *fileBlockList) hasFileHash() bool {
-	fl.mu.Lock()
-	defer fl.mu.Unlock()
+	fl.mu.RLock()
+	defer fl.mu.RUnlock()
 	return fl.blocks[0].hash != nil
 }
 
@@ -191,13 +209,6 @@ func (f *packedFileReader) init(blocks *fileBlockList) error {
 	f.h = h
 	f.blocks = blocks
 	f.offset = 0
-	return nil
-}
-
-func (f *packedFileReader) Close() error {
-	if cl, ok := f.v.(io.Closer); ok {
-		return cl.Close()
-	}
 	return nil
 }
 
@@ -300,15 +311,12 @@ func (f *packedFileReader) ReadByte() (byte, error) {
 	}
 }
 
-func (pr *packedFileReader) newArchiveFile(blocks *fileBlockList) (archiveFile, error) {
+func (pr *packedFileReader) newArchiveFileFrom(r archiveFile, blocks *fileBlockList) (archiveFile, error) {
 	h := blocks.firstBlock()
 	err := pr.init(blocks)
 	if err != nil {
 		return nil, err
 	}
-	// start with packed file reader
-	r := archiveFile(pr)
-	// check for encryption
 	if h.Encrypted {
 		if h.key == nil {
 			r = &errorFile{archiveFile: r, err: ErrArchivedFileEncrypted}
@@ -340,8 +348,104 @@ func (pr *packedFileReader) newArchiveFile(blocks *fileBlockList) (archiveFile, 
 	return r, nil
 }
 
+func (pr *packedFileReader) newArchiveFile(blocks *fileBlockList) (archiveFile, error) {
+	return pr.newArchiveFileFrom(pr, blocks)
+}
+
+type packedFileReadSeeker struct {
+	packedFileReader
+}
+
+func (f *packedFileReadSeeker) openBlock(h *fileBlockHeader, offset int64) (int64, error) {
+	err := f.v.openBlock(h.volnum, h.dataOff+offset, h.PackedSize-offset)
+	if err != nil {
+		return 0, err
+	}
+	f.h = h
+	f.offset = h.packedOff + offset
+	return f.offset, nil
+}
+
+func (f *packedFileReadSeeker) openNextBlock(h *fileBlockHeader) error {
+	_, err := f.openBlock(h, h.PackedSize)
+	if err != nil {
+		return err
+	}
+	return f.nextBlock()
+}
+
+func (f *packedFileReadSeeker) packedSize() (int64, error) {
+	h := f.blocks.lastBlock()
+	if h.last {
+		return h.packedOff + h.PackedSize, nil
+	}
+	err := f.openNextBlock(h)
+	for err == nil {
+		err = f.nextBlock()
+	}
+	if err != io.EOF {
+		return 0, err
+	}
+	if !f.h.last {
+		return 0, ErrInvalidFileBlock
+	}
+	return f.h.packedOff + f.h.PackedSize, nil
+}
+
+func (f *packedFileReadSeeker) Seek(offset int64, whence int) (int64, error) {
+	// calculate absolute offset
+	switch whence {
+	case io.SeekStart:
+	case io.SeekCurrent:
+		offset += f.offset
+	case io.SeekEnd:
+		size, err := f.packedSize()
+		if err != nil {
+			return 0, err
+		}
+		offset += size
+	default:
+		return 0, fs.ErrInvalid
+	}
+	if offset < 0 {
+		return 0, fs.ErrInvalid
+	}
+	// find block in existing list
+	h := f.blocks.findBlock(offset)
+	if h != nil {
+		offset -= h.packedOff
+		return f.openBlock(h, offset)
+	}
+	h = f.blocks.lastBlock()
+	if h.last {
+		return 0, fs.ErrInvalid
+	}
+	err := f.openNextBlock(h)
+	for err == nil {
+		off := offset - h.packedOff
+		if off < f.h.PackedSize || (off == f.h.PackedSize && f.h.last) {
+			return f.openBlock(f.h, off)
+		} else if h.last {
+			return 0, fs.ErrInvalid
+		}
+		err = f.nextBlock()
+	}
+	if err == io.EOF {
+		return 0, fs.ErrInvalid
+	}
+	return 0, err
+}
+
+func (pr *packedFileReadSeeker) newArchiveFile(blocks *fileBlockList) (archiveFile, error) {
+	return pr.newArchiveFileFrom(pr, blocks)
+}
+
 func newPackedFileReader(v volume, opts *options) archiveFile {
-	return &packedFileReader{v: v, opt: opts}
+	pr := packedFileReader{v: v, opt: opts}
+	if v.canSeek() {
+		return &packedFileReadSeeker{pr}
+	}
+	return &pr
 }
 
 type limitedReader struct {
@@ -403,7 +507,7 @@ func (l *limitedReadSeeker) Seek(offset int64, whence int) (int64, error) {
 	if offset < 0 || offset > l.size {
 		return 0, fs.ErrInvalid
 	}
-	return l.sr.Seek(offset, whence)
+	return l.sr.Seek(offset, io.SeekStart)
 }
 
 func newLimitedReader(f archiveFile, size int64) archiveFile {

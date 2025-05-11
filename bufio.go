@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"io/fs"
 )
 
 const (
@@ -24,6 +25,7 @@ var (
 
 type bufVolumeReader struct {
 	r   io.Reader
+	sr  io.Seeker
 	buf []byte
 	i   int
 	n   int
@@ -56,6 +58,32 @@ func (br *bufVolumeReader) fill() error {
 		}
 	}
 	return io.ErrNoProgress
+}
+
+func (br *bufVolumeReader) canSeek() bool {
+	return br.sr != nil
+}
+
+func (br *bufVolumeReader) seek(offset int64) error {
+	if br.sr == nil {
+		return fs.ErrInvalid
+	}
+	start := br.off - int64(br.i)
+	end := start + int64(br.n)
+	if offset >= start && offset <= end {
+		diff := offset - br.off
+		br.off += diff
+		br.i += int(diff)
+		return nil
+	}
+	_, err := br.sr.Seek(offset, io.SeekStart)
+	if err != nil {
+		return err
+	}
+	br.i = 0
+	br.n = 0
+	br.off = offset
+	return nil
 }
 
 func (br *bufVolumeReader) Read(p []byte) (int, error) {
@@ -167,6 +195,7 @@ func (br *bufVolumeReader) findSig() (int, error) {
 
 func (br *bufVolumeReader) Reset(r io.Reader) error {
 	br.r = r
+	br.sr, _ = r.(io.Seeker)
 	br.i = 0
 	br.n = 0
 	br.off = 0

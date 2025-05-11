@@ -81,6 +81,8 @@ func getOptions(opts []Option) *options {
 type volume interface {
 	byteReader
 	nextBlock() (*fileBlockHeader, error)
+	openBlock(volnum int, offset, size int64) error
+	canSeek() bool
 }
 
 type readerVolume struct {
@@ -172,6 +174,22 @@ func (v *readerVolume) ReadByte() (byte, error) {
 	return b, err
 }
 
+func (v *readerVolume) canSeek() bool {
+	return v.br.canSeek()
+}
+
+func (v *readerVolume) openBlock(volnum int, offset, size int64) error {
+	if v.num != volnum {
+		return ErrBadVolumeNumber
+	}
+	err := v.br.seek(offset)
+	if err != nil {
+		return err
+	}
+	v.n = size
+	return nil
+}
+
 func newVolume(r io.Reader, opt *options, volnum int) (*readerVolume, error) {
 	v := &readerVolume{opt: opt}
 	err := v.init(r, volnum)
@@ -205,6 +223,16 @@ func (v *fileVolume) open(volnum int) error {
 	}
 	v.f = f
 	return nil
+}
+
+func (v *fileVolume) openBlock(volnum int, offset, size int64) error {
+	if v.num != volnum {
+		err := v.open(volnum)
+		if err != nil {
+			return err
+		}
+	}
+	return v.readerVolume.openBlock(volnum, offset, size)
 }
 
 func (v *fileVolume) openNext() error { return v.open(v.num + 1) }
