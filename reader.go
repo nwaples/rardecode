@@ -107,8 +107,22 @@ type archiveFile interface {
 	currFile() *fileBlockHeader
 	nextFile() (*fileBlockList, error)
 	newArchiveFile(blocks *fileBlockList) (archiveFile, error)
-	Close() error
 	Stat() (fs.FileInfo, error)
+}
+
+type archiveFileSeeker interface {
+	archiveFile
+	io.Seeker
+}
+
+type fileCloser struct {
+	archiveFile
+	io.Closer
+}
+
+type fileSeekCloser struct {
+	archiveFileSeeker
+	io.Closer
 }
 
 type errorFile struct {
@@ -318,7 +332,7 @@ func (pr *packedFileReader) newArchiveFile(blocks *fileBlockList) (archiveFile, 
 	}
 	if h.UnPackedSize >= 0 && !h.UnKnownSize {
 		// Limit reading to UnPackedSize as there may be padding
-		r = &limitedReader{archiveFile: r, size: h.UnPackedSize}
+		r = newLimitedReader(r, h.UnPackedSize)
 	}
 	if h.hash != nil && !pr.opt.skipCheck {
 		r = newChecksumReader(r, h.hash(), blocks.removeFileHash)
@@ -368,6 +382,36 @@ func (l *limitedReader) ReadByte() (byte, error) {
 	}
 	l.offset++
 	return b, nil
+}
+
+type limitedReadSeeker struct {
+	limitedReader
+	sr io.Seeker
+}
+
+func (l *limitedReadSeeker) Seek(offset int64, whence int) (int64, error) {
+	// calculate absolute offset
+	switch whence {
+	case io.SeekStart:
+	case io.SeekCurrent:
+		offset += l.offset
+	case io.SeekEnd:
+		offset += l.size
+	default:
+		return 0, fs.ErrInvalid
+	}
+	if offset < 0 || offset > l.size {
+		return 0, fs.ErrInvalid
+	}
+	return l.sr.Seek(offset, whence)
+}
+
+func newLimitedReader(f archiveFile, size int64) archiveFile {
+	lr := limitedReader{archiveFile: f, size: size}
+	if sr, ok := f.(io.Seeker); ok {
+		return &limitedReadSeeker{limitedReader: lr, sr: sr}
+	}
+	return &lr
 }
 
 type checksumReader struct {
@@ -482,11 +526,12 @@ func NewReader(r io.Reader, opts ...Option) (*Reader, error) {
 // ReadCloser is a Reader that allows closing of the rar archive.
 type ReadCloser struct {
 	Reader
+	cl io.Closer
 	vm *volumeManager
 }
 
 // Close closes the rar file.
-func (rc *ReadCloser) Close() error { return rc.f.Close() }
+func (rc *ReadCloser) Close() error { return rc.cl.Close() }
 
 // Volumes returns the volume filenames that have been used in decoding the archive
 // up to this point. This will include the current open volume if the archive is still
@@ -502,7 +547,7 @@ func OpenReader(name string, opts ...Option) (*ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	rc := &ReadCloser{vm: v.vm}
+	rc := &ReadCloser{vm: v.vm, cl: v}
 	rc.Reader = newReader(v, options)
 	return rc, nil
 }

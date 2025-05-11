@@ -133,7 +133,7 @@ type RarFS struct {
 	ftree map[string]*fsNode
 }
 
-func (rfs *RarFS) openArchiveFile(blocks *fileBlockList) (archiveFile, error) {
+func (rfs *RarFS) openArchiveFile(blocks *fileBlockList) (fs.File, error) {
 	return rfs.vm.openArchiveFile(blocks)
 }
 
@@ -275,7 +275,7 @@ func listFileBlocks(name string, opts []Option) (*volumeManager, []*fileBlockLis
 		return nil, nil, err
 	}
 	pr := newPackedFileReader(v, options)
-	defer pr.Close()
+	defer v.Close()
 
 	fileBlocks := []*fileBlockList{}
 	for {

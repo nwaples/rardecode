@@ -428,7 +428,7 @@ func (vm *volumeManager) openBlockOffset(h *fileBlockHeader, offset int64) (*fil
 	return v, nil
 }
 
-func (vm *volumeManager) openArchiveFile(blocks *fileBlockList) (archiveFile, error) {
+func (vm *volumeManager) openArchiveFile(blocks *fileBlockList) (fs.File, error) {
 	h := blocks.firstBlock()
 	if h.Solid {
 		return nil, ErrSolidOpen
@@ -443,7 +443,10 @@ func (vm *volumeManager) openArchiveFile(blocks *fileBlockList) (archiveFile, er
 		v.Close()
 		return nil, err
 	}
-	return f, nil
+	if sr, ok := f.(archiveFileSeeker); ok {
+		return &fileSeekCloser{archiveFileSeeker: sr, Closer: v}, nil
+	}
+	return &fileCloser{archiveFile: f, Closer: v}, nil
 }
 
 func openVolume(filename string, opts *options) (*fileVolume, error) {
