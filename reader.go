@@ -8,7 +8,6 @@ import (
 	"hash"
 	"io"
 	"io/fs"
-	"os"
 	"sync"
 	"time"
 )
@@ -55,12 +54,12 @@ type FileHeader struct {
 	Version          int       // file version
 }
 
-// Mode returns an os.FileMode for the file, calculated from the Attributes field.
-func (f *FileHeader) Mode() os.FileMode {
-	var m os.FileMode
+// Mode returns an fs.FileMode for the file, calculated from the Attributes field.
+func (f *FileHeader) Mode() fs.FileMode {
+	var m fs.FileMode
 
 	if f.IsDir {
-		m = os.ModeDir
+		m = fs.ModeDir
 	}
 	if f.HostOS == HostOSWindows {
 		if f.IsDir {
@@ -73,7 +72,7 @@ func (f *FileHeader) Mode() os.FileMode {
 		return m
 	}
 	// assume unix perms for all remaining os types
-	m |= os.FileMode(f.Attributes) & os.ModePerm
+	m |= fs.FileMode(f.Attributes) & fs.ModePerm
 
 	// only check other bits on unix host created archives
 	if f.HostOS != HostOSUnix {
@@ -81,18 +80,18 @@ func (f *FileHeader) Mode() os.FileMode {
 	}
 
 	if f.Attributes&0x200 != 0 {
-		m |= os.ModeSticky
+		m |= fs.ModeSticky
 	}
 	if f.Attributes&0x400 != 0 {
-		m |= os.ModeSetgid
+		m |= fs.ModeSetgid
 	}
 	if f.Attributes&0x800 != 0 {
-		m |= os.ModeSetuid
+		m |= fs.ModeSetuid
 	}
 
 	// Check for additional file types.
 	if f.Attributes&0xF000 == 0xA000 {
-		m |= os.ModeSymlink
+		m |= fs.ModeSymlink
 	}
 	return m
 }
