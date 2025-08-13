@@ -506,7 +506,12 @@ func (l *limitedReadSeeker) Seek(offset int64, whence int) (int64, error) {
 	if offset < 0 || offset > l.size {
 		return 0, fs.ErrInvalid
 	}
-	return l.sr.Seek(offset, io.SeekStart)
+	pos, err := l.sr.Seek(offset, io.SeekStart)
+	if err != nil {
+		return 0, err
+	}
+	l.offset = pos
+	return pos, nil
 }
 
 func newLimitedReader(f archiveFile, size int64) archiveFile {
@@ -526,6 +531,11 @@ type checksumReader struct {
 
 func (cr *checksumReader) eofError() error {
 	if cr.eofErr != nil {
+		return cr.eofErr
+	}
+	// if checksum disabled (e.g., due to seeking), just return EOF
+	if cr.hash == nil {
+		cr.eofErr = io.EOF
 		return cr.eofErr
 	}
 	// calculate file checksum
@@ -556,7 +566,7 @@ func (cr *checksumReader) eofError() error {
 
 func (cr *checksumReader) Read(p []byte) (int, error) {
 	n, err := cr.archiveFile.Read(p)
-	if n > 0 {
+	if n > 0 && cr.hash != nil {
 		if n, err = cr.hash.Write(p[:n]); err != nil {
 			return n, err
 		}
@@ -575,11 +585,29 @@ func (cr *checksumReader) ReadByte() (byte, error) {
 		}
 		return 0, cr.eofError()
 	}
-	_, err = cr.hash.Write([]byte{b})
-	if err != nil {
-		return 0, err
+	if cr.hash != nil {
+		_, err = cr.hash.Write([]byte{b})
+		if err != nil {
+			return 0, err
+		}
 	}
 	return b, err
+}
+
+// Seek delegates to the underlying seeker if available. Any seek disables checksum verification.
+func (cr *checksumReader) Seek(offset int64, whence int) (int64, error) {
+	if s, ok := cr.archiveFile.(io.Seeker); ok {
+		pos, err := s.Seek(offset, whence)
+		if err != nil {
+			return 0, err
+		}
+		// disable checksum after any seek; cannot validate non-linear reads
+		cr.hash = nil
+		cr.success = nil
+		cr.eofErr = nil
+		return pos, nil
+	}
+	return 0, fs.ErrInvalid
 }
 
 func newChecksumReader(f archiveFile, h hash.Hash, success func()) *checksumReader {
@@ -593,6 +621,15 @@ type Reader struct {
 
 func (r *Reader) Read(p []byte) (int, error) { return r.f.Read(p) }
 func (r *Reader) ReadByte() (byte, error)    { return r.f.ReadByte() }
+
+// Seek seeks within the current file stream when supported.
+// Returns fs.ErrInvalid if the current file stream is not seekable (e.g. compressed or solid files).
+func (r *Reader) Seek(offset int64, whence int) (int64, error) {
+	if s, ok := r.f.(io.Seeker); ok {
+		return s.Seek(offset, whence)
+	}
+	return 0, fs.ErrInvalid
+}
 
 // Next advances to the next file in the archive.
 func (r *Reader) Next() (*FileHeader, error) {
@@ -635,6 +672,12 @@ type ReadCloser struct {
 
 // Close closes the rar file.
 func (rc *ReadCloser) Close() error { return rc.cl.Close() }
+
+// Seek seeks within the current file stream when supported.
+// This is equivalent to calling Seek on the embedded Reader.
+func (rc *ReadCloser) Seek(offset int64, whence int) (int64, error) {
+	return rc.Reader.Seek(offset, whence)
+}
 
 // Volumes returns the volume filenames that have been used in decoding the archive
 // up to this point. This will include the current open volume if the archive is still
