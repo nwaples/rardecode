@@ -1,33 +1,24 @@
 package rardecode
 
 import (
-	"bufio"
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
-	"math"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
-)
-
-const (
-	maxSfxSize = 0x100000 // maximum number of bytes to read when searching for RAR signature
-	sigPrefix  = "Rar!\x1A\x07"
+	"sync"
 )
 
 var (
-	ErrNoSig            = errors.New("rardecode: RAR signature not found")
 	ErrVerMismatch      = errors.New("rardecode: volume version mistmatch")
 	ErrArchiveNameEmpty = errors.New("rardecode: archive name empty")
 	ErrFileNameRequired = errors.New("rardecode: filename required for multi volume archive")
+	ErrInvalidHeaderOff = errors.New("rardecode: invalid filed header offset")
 
-	defaultFS      = osFS{}
-	defaultBufSize = 4096
+	defaultFS = osFS{}
 )
 
 type osFS struct{}
@@ -37,10 +28,11 @@ func (fs osFS) Open(name string) (fs.File, error) {
 }
 
 type options struct {
-	bsize int     // size to be use for bufio.Reader
-	fs    fs.FS   // filesystem to use to open files
-	pass  *string // password for encrypted volumes
-	file  string  // filename for volume
+	bsize     int     // size to be use for bufio.Reader
+	fs        fs.FS   // filesystem to use to open files
+	pass      *string // password for encrypted volumes
+	skipCheck bool
+	openCheck bool
 }
 
 // An Option is used for optional archive extraction settings.
@@ -61,10 +53,16 @@ func Password(pass string) Option {
 	return func(o *options) { o.pass = &pass }
 }
 
-func getOptions(opts []Option) options {
-	opt := options{bsize: defaultBufSize}
+// SkipCheck sets archive files checksum not to be checked.
+func SkipCheck(o *options) { o.skipCheck = true }
+
+// OpenFSCheck flags the archive files to be checked on Open or List.
+func OpenFSCheck(o *options) { o.openCheck = true }
+
+func getOptions(opts []Option) *options {
+	opt := &options{}
 	for _, f := range opts {
-		f(&opt)
+		f(opt)
 	}
 	// truncate password
 	if opt.pass != nil {
@@ -74,178 +72,195 @@ func getOptions(opts []Option) options {
 			opt.pass = &pw
 		}
 	}
+	if opt.fs == nil {
+		opt.fs = defaultFS
+	}
 	return opt
 }
 
-// volume extends a fileBlockReader to be used across multiple
-// files in a multi-volume archive
-type volume struct {
-	f     io.Reader     // current file handle
-	br    *bufio.Reader // buffered reader for current volume file
-	dir   string        // current volume directory path
-	files []string      // file names for each volume
-	num   int           // volume number
-	old   bool          // uses old naming scheme
-	off   int64         // current file offset
-	ver   int           // archive file format version
-	fs    fs.FS         // filesystem to use to open files
+type volume interface {
+	byteReader
+	nextBlock() (*fileBlockHeader, error)
+	openBlock(volnum int, offset, size int64) error
+	canSeek() bool
 }
 
-func (v *volume) openFile(file string, volnum int) error {
-	f, err := v.fs.Open(v.dir + file)
+type readerVolume struct {
+	br  *bufVolumeReader // buffered reader for current volume file
+	n   int64            // bytes left in current block
+	num int              // current volume number
+	ver int              // archive file format version
+	arc archiveBlockReader
+	opt *options
+}
+
+func (v *readerVolume) init(r io.Reader, volnum int) error {
+	var err error
+	if v.br == nil {
+		v.br, err = newBufVolumeReader(r, v.opt.bsize)
+	} else {
+		err = v.br.Reset(r)
+	}
 	if err != nil {
 		return err
 	}
-	v.f = f
-	v.num = volnum
-	v.off = 0
-	v.br.Reset(v.f)
-	if volnum == len(v.files) {
-		v.files = append(v.files, file)
-	}
-	version, err := v.findSig()
-	if err != nil {
-		_ = v.Close()
-		return err
-	}
-	if version != v.ver {
+	if v.arc == nil {
+		switch v.br.ver {
+		case archiveVersion15:
+			v.arc = newArchive15(v.opt.pass)
+		case archiveVersion50:
+			v.arc = newArchive50(v.opt.pass)
+		default:
+			return ErrUnknownVersion
+		}
+		v.ver = v.br.ver
+	} else if v.ver != v.br.ver {
 		return ErrVerMismatch
 	}
-	return nil
-}
-
-func (v *volume) init() error {
-	off := v.off
-	err := v.openFile(v.files[v.num], v.num)
+	n, err := v.arc.init(v.br)
 	if err != nil {
 		return err
 	}
-	return v.discard(off - v.off)
-}
-
-func (v *volume) clone() *volume {
-	nv := new(volume)
-	*nv = *v
-	nv.f = nil
-	nv.br = bufio.NewReaderSize(bytes.NewReader(nil), nv.br.Size())
-	nv.files = slices.Clone(nv.files)
-	return nv
-}
-
-func (v *volume) Close() error {
-	// v.f may be nil if os.Open fails in next().
-	// We only close if we opened it (ie. name in v.files).
-	if v.f != nil && len(v.files) > 0 {
-		if c, ok := v.f.(io.Closer); ok {
-			err := c.Close()
-			v.f = nil // set to nil so we can only close v.f once
-			return err
-		}
+	v.num = volnum
+	if n >= 0 && n != volnum {
+		return ErrBadVolumeNumber
 	}
 	return nil
 }
 
-func (v *volume) discard(n int64) error {
-	var err error
-	v.off += n
-	l := int64(v.br.Buffered())
-	if n <= l {
-		_, err = v.br.Discard(int(n))
-	} else if sr, ok := v.f.(io.Seeker); ok {
-		n -= l
-		_, err = sr.Seek(n, io.SeekCurrent)
-		v.br.Reset(v.f)
-	} else {
-		for n > math.MaxInt && err == nil {
-			_, err = v.br.Discard(math.MaxInt)
-			n -= math.MaxInt
+func (v *readerVolume) nextBlock() (*fileBlockHeader, error) {
+	if v.n > 0 {
+		err := v.br.Discard(v.n)
+		if err != nil {
+			return nil, err
 		}
-		if err == nil && n > 0 {
-			_, err = v.br.Discard(int(n))
-		}
+		v.n = 0
 	}
-	if err == io.EOF {
-		err = io.ErrUnexpectedEOF
+	f, err := v.arc.nextBlock(v.br)
+	if err != nil {
+		return nil, err
 	}
-	return err
+	f.volnum = v.num
+	f.dataOff = v.br.off
+	v.n = f.PackedSize
+	return f, nil
 }
 
-func (v *volume) peek(n int) ([]byte, error) {
-	b, err := v.br.Peek(n)
-	if err == io.EOF && len(b) > 0 {
+func (v *readerVolume) Read(p []byte) (int, error) {
+	if v.n == 0 {
+		return 0, io.EOF
+	}
+	if v.n < int64(len(p)) {
+		p = p[:v.n]
+	}
+	n, err := v.br.Read(p)
+	v.n -= int64(n)
+	if err == io.EOF && v.n > 0 {
+		err = io.ErrUnexpectedEOF
+	}
+	return n, err
+}
+
+func (v *readerVolume) ReadByte() (byte, error) {
+	if v.n == 0 {
+		return 0, io.EOF
+	}
+	b, err := v.br.ReadByte()
+	if err == nil {
+		v.n--
+	} else if err == io.EOF && v.n > 0 {
 		err = io.ErrUnexpectedEOF
 	}
 	return b, err
 }
 
-func (v *volume) readSlice(n int) ([]byte, error) {
-	if n <= v.br.Size() {
-		b, err := v.br.Peek(n)
-		if err != nil {
-			if err == io.EOF && len(b) > 0 {
-				err = io.ErrUnexpectedEOF
-			}
-			return nil, err
-		}
-		n, err = v.br.Discard(n)
-		v.off += int64(n)
-		return b[:n:n], err
+func (v *readerVolume) canSeek() bool {
+	return v.br.canSeek()
+}
+
+func (v *readerVolume) openBlock(volnum int, offset, size int64) error {
+	if v.num != volnum {
+		return ErrBadVolumeNumber
 	}
-	// bufio.Reader buffer is too small, create a new slice and copy to it
-	b := make([]byte, n)
-	if _, err := io.ReadFull(v.br, b); err != nil {
+	err := v.br.seek(offset)
+	if err != nil {
+		return err
+	}
+	v.n = size
+	return nil
+}
+
+func newVolume(r io.Reader, opt *options, volnum int) (*readerVolume, error) {
+	v := &readerVolume{opt: opt}
+	err := v.init(r, volnum)
+	if err != nil {
 		return nil, err
 	}
-	v.off += int64(n)
-	return b, nil
+	return v, nil
 }
 
-func (v *volume) Read(p []byte) (int, error) {
-	n, err := v.br.Read(p)
-	v.off += int64(n)
-	return n, err
+type fileVolume struct {
+	*readerVolume
+	f  fs.File
+	vm *volumeManager
 }
 
-// findSig searches for the RAR signature and version at the beginning of a file.
-// It searches no more than maxSfxSize bytes.
-func (v *volume) findSig() (int, error) {
-	v.off = 0
-	for v.off <= maxSfxSize {
-		b, err := v.br.ReadSlice(sigPrefix[0])
-		v.off += int64(len(b))
-		if err == bufio.ErrBufferFull {
-			continue
-		} else if err != nil {
-			if err == io.EOF {
-				err = ErrNoSig
-			}
-			return 0, err
-		}
+func (v *fileVolume) Close() error { return v.f.Close() }
 
-		b, err = v.br.Peek(len(sigPrefix[1:]) + 2)
-		if err != nil {
-			if err == io.EOF {
-				err = ErrNoSig
-			}
-			return 0, err
-		}
-		if !bytes.HasPrefix(b, []byte(sigPrefix[1:])) {
-			continue
-		}
-		b = b[len(sigPrefix)-1:]
-
-		ver := int(b[0])
-		if b[0] != 0 && b[1] != 0 {
-			continue
-		}
-		b, err = v.br.ReadSlice('\x00')
-		if err != nil {
-			return 0, err
-		}
-		v.off += int64(len(b))
-		return ver, nil
+func (v *fileVolume) open(volnum int) error {
+	err := v.Close()
+	if err != nil {
+		return err
 	}
-	return 0, ErrNoSig
+	f, err := v.vm.openVolumeFile(volnum)
+	if err != nil {
+		return err
+	}
+	err = v.readerVolume.init(f, volnum)
+	if err != nil {
+		f.Close()
+		return err
+	}
+	v.f = f
+	return nil
+}
+
+func (v *fileVolume) openBlock(volnum int, offset, size int64) error {
+	if v.num != volnum {
+		err := v.open(volnum)
+		if err != nil {
+			return err
+		}
+	}
+	return v.readerVolume.openBlock(volnum, offset, size)
+}
+
+func (v *fileVolume) openNext() error { return v.open(v.num + 1) }
+
+func (v *fileVolume) nextBlock() (*fileBlockHeader, error) {
+	for {
+		h, err := v.readerVolume.nextBlock()
+		if err == nil {
+			return h, nil
+		}
+		if err == ErrMultiVolume {
+			err = v.openNext()
+			if err != nil {
+				return nil, err
+			}
+		} else if err == errVolumeOrArchiveEnd {
+			err = v.openNext()
+			if err != nil {
+				// new volume doesnt exist, assume end of archive
+				if errors.Is(err, fs.ErrNotExist) {
+					return nil, io.EOF
+				}
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
+	}
 }
 
 func nextNewVolName(file string) string {
@@ -342,66 +357,137 @@ func fixFileExtension(file string) string {
 	return file
 }
 
-// next opens the next volume file in the archive.
-func (v *volume) next() error {
-	if len(v.files) == 0 {
-		return ErrFileNameRequired
-	}
-	err := v.Close()
-	if err != nil {
-		return err
-	}
+type volumeManager struct {
+	dir string // current volume directory path
+	opt *options
 
-	nextVolNum := v.num + 1
-	// check for cached volume name
-	if nextVolNum < len(v.files) {
-		return v.openFile(v.files[nextVolNum], nextVolNum)
-	}
-
-	file := v.files[v.num]
-	if nextVolNum == 1 {
-		file = fixFileExtension(file)
-		// new naming scheme must have volume number in filename
-		if !v.old && hasDigits(file) {
-			// found digits, try using new naming scheme
-			err = v.openFile(nextNewVolName(file), nextVolNum)
-			if err == nil || !os.IsNotExist(err) {
-				return err
-			}
-			// file didn't exist, try old naming scheme
-			oldErr := v.openFile(nextOldVolName(file), nextVolNum)
-			if oldErr == nil || !os.IsNotExist(err) {
-				v.old = true
-				return oldErr
-			}
-			return err
-		}
-		v.old = true
-	}
-	if v.old {
-		file = nextOldVolName(file)
-	} else {
-		file = nextNewVolName(file)
-	}
-	return v.openFile(file, nextVolNum)
+	mu    sync.Mutex
+	files []string // file names for each volume
+	old   bool     // uses old naming scheme
 }
 
-func newVolume(r io.Reader, options options) (*volume, error) {
-	v := &volume{
-		f:  r,
-		br: bufio.NewReaderSize(r, options.bsize),
-		fs: options.fs,
+func (vm *volumeManager) Files() []string {
+	vm.mu.Lock()
+	defer vm.mu.Unlock()
+	return vm.files
+}
+
+func (vm *volumeManager) tryNewName(file string) (fs.File, error) {
+	// try using new naming scheme
+	name := nextNewVolName(file)
+	f, err := vm.opt.fs.Open(vm.dir + name)
+	if !errors.Is(err, fs.ErrNotExist) {
+		vm.files = append(vm.files, name)
+		return f, err
 	}
-	if options.file != "" {
-		dir, file := filepath.Split(options.file)
-		v.dir = dir
-		v.files = []string{file}
+	// file didn't exist, try old naming scheme
+	name = nextOldVolName(file)
+	f, oldErr := vm.opt.fs.Open(vm.dir + name)
+	if !errors.Is(oldErr, fs.ErrNotExist) {
+		vm.old = true
+		vm.files = append(vm.files, name)
+		return f, oldErr
 	}
-	var err error
-	v.ver, err = v.findSig()
+	return nil, err
+}
+
+// next opens the next volume file in the archive.
+func (vm *volumeManager) openVolumeFile(volnum int) (fs.File, error) {
+	vm.mu.Lock()
+	defer vm.mu.Unlock()
+
+	var file string
+	// check for cached volume name
+	if volnum < len(vm.files) {
+		return vm.opt.fs.Open(vm.dir + vm.files[volnum])
+	}
+	file = vm.files[len(vm.files)-1]
+	if len(vm.files) == 1 {
+		file = fixFileExtension(file)
+		if !vm.old && hasDigits(file) {
+			return vm.tryNewName(file)
+		}
+		vm.old = true
+	}
+	for len(vm.files) <= volnum {
+		if vm.old {
+			file = nextOldVolName(file)
+		} else {
+			file = nextNewVolName(file)
+		}
+		vm.files = append(vm.files, file)
+	}
+	return vm.opt.fs.Open(vm.dir + file)
+}
+
+func (vm *volumeManager) newVolume(volnum int) (*fileVolume, error) {
+	f, err := vm.openVolumeFile(volnum)
 	if err != nil {
-		_ = v.Close()
 		return nil, err
 	}
+	v, err := newVolume(f, vm.opt, volnum)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	mv := &fileVolume{
+		readerVolume: v,
+		f:            f,
+		vm:           vm,
+	}
+	return mv, nil
+}
+
+func (vm *volumeManager) openBlockOffset(h *fileBlockHeader, offset int64) (*fileVolume, error) {
+	v, err := vm.newVolume(h.volnum)
+	if err != nil {
+		return nil, err
+	}
+	if h.dataOff < v.br.off {
+		v.Close()
+		return nil, ErrInvalidHeaderOff
+	}
+	err = v.br.Discard(h.dataOff - v.br.off + offset)
+	v.n = h.PackedSize - offset
+	if err != nil {
+		v.Close()
+		return nil, err
+	}
+	return v, nil
+}
+
+func (vm *volumeManager) openArchiveFile(blocks *fileBlockList) (fs.File, error) {
+	h := blocks.firstBlock()
+	if h.Solid {
+		return nil, ErrSolidOpen
+	}
+	v, err := vm.openBlockOffset(h, 0)
+	if err != nil {
+		return nil, err
+	}
+	pr := newPackedFileReader(v, vm.opt)
+	f, err := pr.newArchiveFile(blocks)
+	if err != nil {
+		v.Close()
+		return nil, err
+	}
+	if sr, ok := f.(archiveFileSeeker); ok {
+		return &fileSeekCloser{archiveFileSeeker: sr, Closer: v}, nil
+	}
+	return &fileCloser{archiveFile: f, Closer: v}, nil
+}
+
+func openVolume(filename string, opts *options) (*fileVolume, error) {
+	dir, file := filepath.Split(filename)
+	vm := &volumeManager{
+		dir:   dir,
+		files: []string{file},
+		opt:   opts,
+	}
+	v, err := vm.newVolume(0)
+	if err != nil {
+		return nil, err
+	}
+	vm.old = v.arc.useOldNaming()
 	return v, nil
 }
