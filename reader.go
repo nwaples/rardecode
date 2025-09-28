@@ -336,7 +336,7 @@ func (pr *packedFileReader) newArchiveFileFrom(r archiveFile, blocks *fileBlockL
 		if !h.UnKnownSize && h.winSize > h.UnPackedSize {
 			h.winSize = h.UnPackedSize
 		}
-		if h.winSize > maxDictSize {
+		if h.winSize > maxDictSize || h.winSize > pr.opt.maxDictSize {
 			return nil, ErrDictionaryTooLarge
 		}
 		if h.winSize > math.MaxInt {

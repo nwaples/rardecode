@@ -21,6 +21,10 @@ var (
 	defaultFS = osFS{}
 )
 
+const (
+	DefaultMaxDictionarySize = 4 << 30 // default max dictionary size of 4GB
+)
+
 type osFS struct{}
 
 func (fs osFS) Open(name string) (fs.File, error) {
@@ -28,11 +32,12 @@ func (fs osFS) Open(name string) (fs.File, error) {
 }
 
 type options struct {
-	bsize     int     // size to be use for bufio.Reader
-	fs        fs.FS   // filesystem to use to open files
-	pass      *string // password for encrypted volumes
-	skipCheck bool
-	openCheck bool
+	bsize       int     // size to be use for bufio.Reader
+	maxDictSize int64   // max dictionary size
+	fs          fs.FS   // filesystem to use to open files
+	pass        *string // password for encrypted volumes
+	skipCheck   bool
+	openCheck   bool
 }
 
 // An Option is used for optional archive extraction settings.
@@ -41,6 +46,14 @@ type Option func(*options)
 // BufferSize sets the size of the bufio.Reader used in reading the archive.
 func BufferSize(size int) Option {
 	return func(o *options) { o.bsize = size }
+}
+
+// MaxDictionarySize sets the maximum size in bytes of the dictionary used in decoding a file.
+// Any attempt to decode a file with a larger size will return an error.
+// The default size if not set is DefaultMaxDictionarySize.
+// Any size above 64GB will be ignored. Any size below 256kB will prevent any file from being decoded.
+func MaxDictionarySize(size int64) Option {
+	return func(o *options) { o.maxDictSize = size }
 }
 
 // FileSystem sets the fs.FS to be used for opening archive volumes.
@@ -60,7 +73,10 @@ func SkipCheck(o *options) { o.skipCheck = true }
 func OpenFSCheck(o *options) { o.openCheck = true }
 
 func getOptions(opts []Option) *options {
-	opt := &options{}
+	opt := &options{
+		fs:          defaultFS,
+		maxDictSize: DefaultMaxDictionarySize,
+	}
 	for _, f := range opts {
 		f(opt)
 	}
@@ -71,9 +87,6 @@ func getOptions(opts []Option) *options {
 			pw := string(runes[:maxPassword])
 			opt.pass = &pw
 		}
-	}
-	if opt.fs == nil {
-		opt.fs = defaultFS
 	}
 	return opt
 }
