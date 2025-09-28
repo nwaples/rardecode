@@ -8,6 +8,7 @@ import (
 	"hash"
 	"io"
 	"io/fs"
+	"math"
 	"sync"
 	"time"
 )
@@ -331,7 +332,17 @@ func (pr *packedFileReader) newArchiveFileFrom(r archiveFile, blocks *fileBlockL
 		if pr.dr == nil {
 			pr.dr = new(decodeReader)
 		}
-		err := pr.dr.init(r, h.decVer, h.winSize, !h.Solid, h.arcSolid, h.UnPackedSize)
+		// doesn't make sense for the dictionary to be larger than the file
+		if !h.UnKnownSize && h.winSize > h.UnPackedSize {
+			h.winSize = h.UnPackedSize
+		}
+		if h.winSize > maxDictSize {
+			return nil, ErrDictionaryTooLarge
+		}
+		if h.winSize > math.MaxInt {
+			return nil, ErrPlatformIntSize
+		}
+		err := pr.dr.init(r, h.decVer, int(h.winSize), !h.Solid, h.arcSolid, h.UnPackedSize)
 		if err != nil {
 			return nil, err
 		}

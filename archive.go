@@ -89,7 +89,7 @@ type fileBlockHeader struct {
 	packedOff int64            // offset to data in packed file
 	blocknum  int              // number for current block in file
 	volnum    int              // archive volume number
-	winSize   int              // decode window size
+	winSize   int64            // decode window size
 	hash      func() hash.Hash // hash used for file checksum
 	hashKey   []byte           // optional hmac key to be used calculate file checksum
 	sum       []byte           // expected checksum for file contents

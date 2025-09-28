@@ -8,7 +8,6 @@ import (
 	"hash"
 	"hash/crc32"
 	"io"
-	"math"
 	"math/bits"
 	"slices"
 	"time"
@@ -374,28 +373,21 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 	method := (flags >> 7) & 7 // compression method (0 == none)
 	if f.first && method != 0 {
 		unpackver := flags & file5CompAlgorithm
-		var winSize int64
-		if unpackver == 0 {
+		switch unpackver {
+		case 0:
 			f.decVer = decode50Ver
-			winSize = 0x20000 << ((flags >> 10) & 0x0F)
-		} else if unpackver == 1 {
+			f.winSize = 0x20000 << ((flags >> 10) & 0x0F)
+		case 1:
 			if flags&file5CompV5Compat > 0 {
 				f.decVer = decode50Ver
 			} else {
 				f.decVer = decode70Ver
 			}
-			winSize = 0x20000 << ((flags >> 10) & 0x1F)
-			winSize += winSize / 32 * int64((flags>>15)&0x1F)
-			if winSize > maxDictSize {
-				return nil, ErrDictionaryTooLarge
-			}
-		} else {
+			f.winSize = 0x20000 << ((flags >> 10) & 0x1F)
+			f.winSize += f.winSize / 32 * int64((flags>>15)&0x1F)
+		default:
 			return nil, ErrUnknownDecoder
 		}
-		if winSize > math.MaxInt {
-			return nil, ErrPlatformIntSize
-		}
-		f.winSize = int(winSize)
 	}
 	switch h.data.uvarint() {
 	case 0:
