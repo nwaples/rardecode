@@ -104,6 +104,8 @@ type byteReader interface {
 
 type archiveFile interface {
 	byteReader
+	io.WriterTo
+	writeToN(w io.Writer, n int64) (int64, error)
 	currFile() *fileBlockHeader
 	nextFile() (*fileBlockList, error)
 	newArchiveFile(blocks *fileBlockList) (archiveFile, error)
@@ -130,8 +132,10 @@ type errorFile struct {
 	err error
 }
 
-func (ef *errorFile) ReadByte() (byte, error)    { return 0, ef.err }
-func (ef *errorFile) Read(p []byte) (int, error) { return 0, ef.err }
+func (ef *errorFile) ReadByte() (byte, error)                      { return 0, ef.err }
+func (ef *errorFile) Read(p []byte) (int, error)                   { return 0, ef.err }
+func (ef *errorFile) WriteTo(w io.Writer) (int64, error)           { return 0, ef.err }
+func (ef *errorFile) writeToN(w io.Writer, n int64) (int64, error) { return 0, ef.err }
 
 type fileBlockList struct {
 	mu     sync.RWMutex
@@ -309,6 +313,34 @@ func (f *packedFileReader) ReadByte() (byte, error) {
 		}
 		return b, err
 	}
+}
+
+func (f *packedFileReader) writeToN(w io.Writer, n int64) (int64, error) {
+	if n == 0 {
+		return 0, nil
+	}
+	var err error
+	var tot int64
+	todo := n
+	for todo != 0 && err == nil {
+		var l int64
+		l, err = f.v.writeToAtMost(w, todo)
+		if todo > 0 {
+			todo -= l
+		}
+		tot += int64(l)
+		if err == nil && todo != 0 {
+			err = f.nextBlock()
+		}
+	}
+	if todo <= 0 && err == io.EOF {
+		err = nil
+	}
+	return tot, err
+}
+
+func (f *packedFileReader) WriteTo(w io.Writer) (int64, error) {
+	return f.writeToN(w, -1)
 }
 
 func (pr *packedFileReader) newArchiveFileFrom(r archiveFile, blocks *fileBlockList) (archiveFile, error) {
@@ -498,6 +530,23 @@ func (l *limitedReader) ReadByte() (byte, error) {
 	return b, nil
 }
 
+func (l *limitedReader) writeToN(w io.Writer, n int64) (int64, error) {
+	diff := l.size - l.offset
+	m, err := l.archiveFile.writeToN(w, min(diff, n))
+	l.offset += m
+	if m < n && err == nil {
+		err = io.EOF
+	}
+	return m, err
+}
+
+func (l *limitedReader) WriteTo(w io.Writer) (int64, error) {
+	diff := l.size - l.offset
+	n, err := l.archiveFile.writeToN(w, diff)
+	l.offset += n
+	return n, err
+}
+
 type limitedReadSeeker struct {
 	limitedReader
 	sr io.Seeker
@@ -593,6 +642,22 @@ func (cr *checksumReader) ReadByte() (byte, error) {
 	return b, err
 }
 
+func (cr *checksumReader) writeToN(w io.Writer, n int64) (int64, error) {
+	panic("checksumReader.writeToN should never be called")
+}
+
+func (cr *checksumReader) WriteTo(w io.Writer) (int64, error) {
+	mw := io.MultiWriter(w, cr.hash)
+	n, err := cr.archiveFile.WriteTo(mw)
+	if err == nil || err == io.EOF {
+		err = cr.eofError()
+	}
+	if err != nil && err != io.EOF {
+		return n, err
+	}
+	return n, nil
+}
+
 func newChecksumReader(f archiveFile, h hash.Hash, success func()) *checksumReader {
 	return &checksumReader{archiveFile: f, hash: h, success: success}
 }
@@ -602,8 +667,9 @@ type Reader struct {
 	f archiveFile
 }
 
-func (r *Reader) Read(p []byte) (int, error) { return r.f.Read(p) }
-func (r *Reader) ReadByte() (byte, error)    { return r.f.ReadByte() }
+func (r *Reader) Read(p []byte) (int, error)         { return r.f.Read(p) }
+func (r *Reader) ReadByte() (byte, error)            { return r.f.ReadByte() }
+func (r *Reader) WriteTo(w io.Writer) (int64, error) { return r.f.WriteTo(w) }
 
 // Next advances to the next file in the archive.
 func (r *Reader) Next() (*FileHeader, error) {

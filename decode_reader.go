@@ -327,6 +327,41 @@ func (d *decodeReader) ReadByte() (byte, error) {
 	return b, nil
 }
 
+func (d *decodeReader) writeToN(w io.Writer, n int64) (int64, error) {
+	if n == 0 {
+		return 0, nil
+	}
+	var tot int64
+	var err error
+	for tot != n && err == nil {
+		if len(d.outbuf) == 0 {
+			err = d.decode()
+			if err != nil {
+				break
+			}
+		}
+		buf := d.outbuf
+		if n > 0 {
+			todo := n - tot
+			if todo < int64(len(buf)) {
+				buf = buf[:todo]
+			}
+		}
+		var l int
+		l, err = w.Write(buf)
+		tot += int64(l)
+		d.outbuf = d.outbuf[l:]
+	}
+	if n < 0 && err == io.EOF {
+		err = nil
+	}
+	return tot, err
+}
+
+func (d *decodeReader) WriteTo(w io.Writer) (int64, error) {
+	return d.writeToN(w, -1)
+}
+
 func (d *decodeReader) nextFile() (*fileBlockList, error) {
 	if d.solid {
 		_, err := io.Copy(io.Discard, d)

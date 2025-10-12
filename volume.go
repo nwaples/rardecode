@@ -93,6 +93,7 @@ func getOptions(opts []Option) *options {
 
 type volume interface {
 	byteReader
+	writeToAtMost(w io.Writer, n int64) (int64, error)
 	nextBlock() (*fileBlockHeader, error)
 	openBlock(volnum int, offset, size int64) error
 	canSeek() bool
@@ -185,6 +186,20 @@ func (v *readerVolume) ReadByte() (byte, error) {
 		err = io.ErrUnexpectedEOF
 	}
 	return b, err
+}
+
+func (v *readerVolume) writeToAtMost(w io.Writer, n int64) (int64, error) {
+	if n == 0 {
+		return 0, nil
+	}
+	if n > 0 {
+		n = min(n, v.n)
+	} else {
+		n = v.n
+	}
+	l, err := v.br.writeToN(w, n)
+	v.n -= l
+	return l, err
 }
 
 func (v *readerVolume) canSeek() bool {

@@ -8,7 +8,7 @@ import (
 
 // cipherBlockReader implements Block Mode decryption of an io.Reader object.
 type cipherBlockReader struct {
-	byteReader
+	br     byteReader
 	mode   cipher.BlockMode
 	inbuf  []byte // raw input blocks not yet decrypted
 	outbuf []byte // output buffer used when output slice < block size
@@ -17,7 +17,7 @@ type cipherBlockReader struct {
 
 func (cr *cipherBlockReader) fillOutbuf() error {
 	l := len(cr.inbuf)
-	_, err := io.ReadFull(cr.byteReader, cr.block[l:])
+	_, err := io.ReadFull(cr.br, cr.block[l:])
 	if err != nil {
 		return err
 	}
@@ -66,7 +66,7 @@ func (cr *cipherBlockReader) Read(p []byte) (int, error) {
 		copy(p, cr.inbuf)
 		cr.inbuf = nil
 	}
-	n, err := io.ReadAtLeast(cr.byteReader, p[l:], blockSize-l)
+	n, err := io.ReadAtLeast(cr.br, p[l:], blockSize-l)
 	if err != nil {
 		return 0, err
 	}
@@ -82,11 +82,46 @@ func (cr *cipherBlockReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+func (cr *cipherBlockReader) writeToN(w io.Writer, n int64) (int64, error) {
+	if n == 0 {
+		return 0, nil
+	}
+	var tot int64
+	var err error
+	for tot != n && err == nil {
+		if len(cr.outbuf) == 0 {
+			err = cr.fillOutbuf()
+			if err != nil {
+				break
+			}
+		}
+		buf := cr.outbuf
+		if n > 0 {
+			todo := n - tot
+			if todo < int64(len(buf)) {
+				buf = buf[:todo]
+			}
+		}
+		var l int
+		l, err = w.Write(buf)
+		tot += int64(l)
+		cr.outbuf = cr.outbuf[l:]
+	}
+	if n < 0 && err == io.EOF {
+		err = nil
+	}
+	return tot, err
+}
+
+func (cr *cipherBlockReader) WriteTo(w io.Writer) (int64, error) {
+	return cr.writeToN(w, -1)
+}
+
 func newCipherBlockReader(r byteReader, mode cipher.BlockMode) *cipherBlockReader {
 	return &cipherBlockReader{
-		byteReader: r,
-		mode:       mode,
-		block:      make([]byte, mode.BlockSize()),
+		br:    r,
+		mode:  mode,
+		block: make([]byte, mode.BlockSize()),
 	}
 }
 
@@ -111,6 +146,14 @@ func (cr *cipherBlockFileReader) ReadByte() (byte, error) {
 
 func (cr *cipherBlockFileReader) Read(p []byte) (int, error) {
 	return cr.cbr.Read(p)
+}
+
+func (cr *cipherBlockFileReader) WriteTo(w io.Writer) (int64, error) {
+	return cr.cbr.WriteTo(w)
+}
+
+func (cr *cipherBlockFileReader) writeToN(w io.Writer, n int64) (int64, error) {
+	return cr.cbr.writeToN(w, n)
 }
 
 func newAesDecryptFileReader(r archiveFile, key, iv []byte) (*cipherBlockFileReader, error) {
