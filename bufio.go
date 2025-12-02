@@ -174,7 +174,7 @@ func (br *bufVolumeReader) writeToN(w io.Writer, n int64) (int64, error) {
 // findSig searches for the RAR signature and version at the beginning of a file.
 // It searches no more than maxSfxSize bytes from the file start.
 func (br *bufVolumeReader) findSig() (int, error) {
-	for br.off <= maxSfxSize {
+	for br.off <= maxSfxSize && br.off >= 0 {
 		if br.i == br.n {
 			err := br.fill()
 			if err != nil {
@@ -183,7 +183,12 @@ func (br *bufVolumeReader) findSig() (int, error) {
 		}
 		n := bytes.IndexByte(br.buf[br.i:br.n], sigPrefix[0])
 		if n < 0 {
-			br.off += int64(n)
+			buffered := int64(br.n - br.i)
+			if br.off+buffered > maxSfxSize {
+				return 0, ErrNoSig
+			}
+			br.off += buffered
+			br.i = br.n
 			continue
 		}
 		br.i += n
