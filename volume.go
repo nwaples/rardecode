@@ -32,12 +32,13 @@ func (fs osFS) Open(name string) (fs.File, error) {
 }
 
 type options struct {
-	bsize       int     // size to be use for bufio.Reader
-	maxDictSize int64   // max dictionary size
-	fs          fs.FS   // filesystem to use to open files
-	pass        *string // password for encrypted volumes
-	skipCheck   bool
-	openCheck   bool
+	bsize           int     // size to be use for bufio.Reader
+	maxDictSize     int64   // max dictionary size
+	fs              fs.FS   // filesystem to use to open files
+	pass            *string // password for encrypted volumes
+	skipCheck       bool
+	openCheck       bool
+	iterHeadersOnly bool // skip file contents automatically (for iteration)
 }
 
 // An Option is used for optional archive extraction settings.
@@ -71,6 +72,11 @@ func SkipCheck(o *options) { o.skipCheck = true }
 
 // OpenFSCheck flags the archive files to be checked on Open or List.
 func OpenFSCheck(o *options) { o.openCheck = true }
+
+// IterHeadersOnly configures the iterator to skip file contents automatically.
+// This is more efficient than manually calling Skip() after each Next()
+// as it can avoid setting up decompression readers.
+func IterHeadersOnly(o *options) { o.iterHeadersOnly = true }
 
 func getOptions(opts []Option) *options {
 	opt := &options{
