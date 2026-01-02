@@ -256,14 +256,6 @@ func (f *packedFileReader) nextBlock() error {
 
 // next advances to the next packed file in the RAR archive.
 func (f *packedFileReader) nextFile() (*fileBlockList, error) {
-	// skip to last block in current file
-	var err error
-	for err == nil {
-		err = f.nextBlock()
-	}
-	if err != io.EOF {
-		return nil, err
-	}
 	h, err := f.v.nextBlock() // get next file block
 	if err != nil {
 		if err == errVolumeOrArchiveEnd {
@@ -279,6 +271,16 @@ func (f *packedFileReader) nextFile() (*fileBlockList, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	for {
+		if err := f.nextBlock(); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+	}
+
 	return blocks, nil
 }
 
