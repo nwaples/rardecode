@@ -39,6 +39,7 @@ type options struct {
 	skipCheck       bool
 	openCheck       bool
 	iterHeadersOnly bool // skip file contents automatically (for iteration)
+	iterSplitBlocks bool // (for iteration)
 }
 
 // An Option is used for optional archive extraction settings.
@@ -77,6 +78,10 @@ func OpenFSCheck(o *options) { o.openCheck = true }
 // This is more efficient than manually calling Skip() after each Next()
 // as it can avoid setting up decompression readers.
 func IterHeadersOnly(o *options) { o.iterHeadersOnly = true }
+
+// IterSplitBlocks configures the iterator to return each block of a split file
+// separately, rather than collecting all blocks into a single file entry.
+func IterSplitBlocks(o *options) { o.iterSplitBlocks = true }
 
 func getOptions(opts []Option) *options {
 	opt := &options{

@@ -263,7 +263,7 @@ func (f *packedFileReader) nextFile() (*fileBlockList, error) {
 		}
 		return nil, err
 	}
-	if !h.first {
+	if !h.first && !f.opt.iterSplitBlocks {
 		return nil, ErrInvalidFileBlock
 	}
 	blocks := newFileBlockList(h)
@@ -272,12 +272,14 @@ func (f *packedFileReader) nextFile() (*fileBlockList, error) {
 		return nil, err
 	}
 
-	for {
-		if err := f.nextBlock(); err != nil {
-			if err == io.EOF {
-				break
+	if !f.opt.iterSplitBlocks {
+		for {
+			if err := f.nextBlock(); err != nil {
+				if err == io.EOF {
+					break
+				}
+				return nil, err
 			}
-			return nil, err
 		}
 	}
 
