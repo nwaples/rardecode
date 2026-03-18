@@ -371,8 +371,10 @@ func (pr *packedFileReader) newArchiveFileFrom(r archiveFile, blocks *fileBlockL
 		if pr.dr == nil {
 			pr.dr = new(decodeReader)
 		}
-		// doesn't make sense for the dictionary to be larger than the file
-		if !h.UnKnownSize && h.winSize > h.UnPackedSize {
+		// For non-solid files, the dictionary can't need more space than the
+		// file itself. For solid files, previous file data may still be
+		// referenced, so the full dictionary size must be preserved.
+		if !h.Solid && !h.UnKnownSize && h.winSize > h.UnPackedSize {
 			h.winSize = h.UnPackedSize
 		}
 		if h.winSize > maxDictSize || h.winSize > pr.opt.maxDictSize {

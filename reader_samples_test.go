@@ -25,7 +25,7 @@ func sampleArchives(t *testing.T) []string {
 func readArchiveSequentially(t *testing.T, path string) []string {
 	t.Helper()
 
-	rc, err := OpenReader(path, SkipCheck)
+	rc, err := OpenReader(path)
 	if err != nil {
 		t.Fatalf("OpenReader(%q): %v", path, err)
 	}
@@ -48,11 +48,12 @@ func readArchiveSequentially(t *testing.T, path string) []string {
 			t.Fatalf("Next(%q): empty file name", path)
 		}
 
-		if h.PackedSize < 0 {
-			t.Fatalf("invalid packed size for %q in %q: %d", h.Name, path, h.PackedSize)
+		n, err := io.Copy(io.Discard, rc)
+		if err != nil {
+			t.Fatalf("reading %q in %q: %v", h.Name, path, err)
 		}
-		if !h.UnKnownSize && h.UnPackedSize < 0 {
-			t.Fatalf("invalid unpacked size for %q in %q: %d", h.Name, path, h.UnPackedSize)
+		if !h.IsDir && !h.UnKnownSize && n != h.UnPackedSize {
+			t.Fatalf("size mismatch for %q in %q: got %d, want %d", h.Name, path, n, h.UnPackedSize)
 		}
 
 		names = append(names, h.Name)
@@ -69,7 +70,6 @@ func readArchiveSequentially(t *testing.T, path string) []string {
 
 func TestSampleArchivesSequentialRead(t *testing.T) {
 	for _, path := range sampleArchives(t) {
-		path := path
 		t.Run(path, func(t *testing.T) {
 			names := readArchiveSequentially(t, path)
 			if len(names) == 0 {
@@ -81,11 +81,10 @@ func TestSampleArchivesSequentialRead(t *testing.T) {
 
 func TestSampleArchivesListMatchesSequential(t *testing.T) {
 	for _, path := range sampleArchives(t) {
-		path := path
 		t.Run(path, func(t *testing.T) {
 			sequentialNames := readArchiveSequentially(t, path)
 
-			files, err := List(path, SkipCheck)
+			files, err := List(path)
 			if err != nil {
 				t.Fatalf("List(%q): %v", path, err)
 			}
