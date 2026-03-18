@@ -349,14 +349,21 @@ func (pr *packedFileReader) newArchiveFileFrom(r archiveFile, blocks *fileBlockL
 	if err != nil {
 		return nil, err
 	}
+	if len(h.errs) > 0 {
+		if len(h.errs) == 1 {
+			err = h.errs[0]
+		} else {
+			err = errors.Join(h.errs...)
+		}
+		return &errorFile{archiveFile: r, err: err}, nil
+	}
 	if h.Encrypted {
 		if h.key == nil {
-			r = &errorFile{archiveFile: r, err: ErrArchivedFileEncrypted}
-		} else {
-			r, err = newAesDecryptFileReader(r, h.key, h.iv) // decrypt
-			if err != nil {
-				return nil, err
-			}
+			return &errorFile{archiveFile: r, err: ErrArchivedFileEncrypted}, nil
+		}
+		r, err = newAesDecryptFileReader(r, h.key, h.iv) // decrypt
+		if err != nil {
+			return nil, err
 		}
 	}
 	// check for compression
