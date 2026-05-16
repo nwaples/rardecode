@@ -143,6 +143,9 @@ func (d *decodeReader) copyBytes(length, offset int) {
 		d.win[d.w] = d.win[i]
 		d.w++
 		i++
+		if i >= d.size {
+			i = 0
+		}
 		length--
 	}
 }
