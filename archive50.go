@@ -68,7 +68,8 @@ const (
 	pwCheckSize   = 8
 	maxKdfCount   = 24
 
-	maxDictSize = 0x1000000000 // maximum dictionary size 64GB
+	maxDictSize   = 0x1000000000 // maximum dictionary size 64GB
+	maxHeaderSize = 0x200000     // maximum header size: https://www.rarlab.com/technote.htm
 )
 
 var (
@@ -79,6 +80,7 @@ var (
 	ErrDictionaryTooLarge   = errors.New("rardecode: decode dictionary too large")
 	ErrBadVolumeNumber      = errors.New("rardecode: bad volume number")
 	ErrNoArchiveBlock       = errors.New("rardecode: missing archive block")
+	ErrBadBlockHeader       = errors.New("rardecode: bad block header")
 )
 
 type extra struct {
@@ -495,10 +497,15 @@ func (a *archive50) readBlockHeader(r byteReader) (*blockHeader50, error) {
 	}
 	b := readBuf(sizeBuf)
 	crc := b.uint32()
-	// TODO: check size is valid
-	size := int(b.uvarint()) // header size
 
-	buf := make([]byte, 3+size-len(b))
+	// Check if header size is valid
+	size := int(b.uvarint())
+	bufSize := 3 + size - len(b)
+	if bufSize < 4 || size > maxHeaderSize {
+		return nil, ErrBadBlockHeader
+	}
+
+	buf := make([]byte, bufSize)
 	copy(buf, sizeBuf[4:])
 	_, err = io.ReadFull(r, buf[3:])
 	if err != nil {
