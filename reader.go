@@ -372,7 +372,7 @@ func (pr *packedFileReader) newArchiveFileFrom(r archiveFile, blocks *fileBlockL
 			pr.dr = new(decodeReader)
 		}
 		// doesn't make sense for the dictionary to be larger than the file
-		if !h.UnKnownSize && h.winSize > h.UnPackedSize {
+		if !h.Solid && !h.UnKnownSize && h.winSize > h.UnPackedSize {
 			h.winSize = h.UnPackedSize
 		}
 		if h.winSize > maxDictSize || h.winSize > pr.opt.maxDictSize {
