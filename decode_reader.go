@@ -111,39 +111,18 @@ func (d *decodeReader) writeByte(c byte) {
 // copyBytes copies len bytes at off distance from the end
 // to the end of the window.
 func (d *decodeReader) copyBytes(length, offset int) {
-	length %= d.size
-	if length < 0 {
-		length += d.size
-	}
-
-	i := (d.w - offset) % d.size
-	if i < 0 {
-		i += d.size
-	}
-	iend := i + length
-	if i > d.w {
-		if iend > d.size {
-			iend = d.size
-		}
-		n := copy(d.win[d.w:], d.win[i:iend])
-		d.w += n
-		length -= n
-		if length == 0 {
-			return
-		}
-		iend = length
+	length = (d.size + length) % d.size
+	wend := min(d.w+length, d.size)
+	i := (d.size + d.w - offset) % d.size
+	if i == d.w {
+		d.w = wend
+		return
+	} else if i > d.w {
+		d.w += copy(d.win[d.w:wend], d.win[i:])
 		i = 0
 	}
-	if iend <= d.w {
-		n := copy(d.win[d.w:], d.win[i:iend])
-		d.w += n
-		return
-	}
-	for length > 0 && d.w < d.size {
-		d.win[d.w] = d.win[i]
-		d.w++
-		i++
-		length--
+	for d.w < wend {
+		d.w += copy(d.win[d.w:wend], d.win[i:d.w])
 	}
 }
 
