@@ -266,8 +266,8 @@ func (rfs *RarFS) Sub(dir string) (fs.FS, error) {
 	}
 	prefix := dir + "/"
 	for k, v := range rfs.ftree {
-		if strings.HasPrefix(k, prefix) {
-			newFS.ftree[strings.TrimPrefix(k, prefix)] = v
+		if after, ok := strings.CutPrefix(k, prefix); ok {
+			newFS.ftree[after] = v
 		}
 	}
 	return newFS, nil
