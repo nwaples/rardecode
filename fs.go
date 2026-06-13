@@ -90,9 +90,11 @@ func (n *fsNode) isDir() bool {
 	return n.blocks == nil || n.blocks.isDir()
 }
 
+/*
 func (n *fsNode) hasFileHash() bool {
 	return n.blocks != nil && n.blocks.hasFileHash()
 }
+*/
 
 func (n *fsNode) firstBlock() *fileBlockHeader {
 	if n.blocks == nil {
