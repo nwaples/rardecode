@@ -52,6 +52,10 @@ const (
 	file5CompDictFract = 0x000F8000
 	file5CompV5Compat  = 0x00100000
 
+	// host os
+	file5HostOSWindows = 0
+	file5HostOSUnix    = 1
+
 	// file encryption record flags
 	file5EncCheckPresent = 0x0001 // password check data is present
 	file5EncUseMac       = 0x0002 // use MAC instead of plain checksum
@@ -392,9 +396,9 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 		}
 	}
 	switch h.data.uvarint() {
-	case 0:
+	case file5HostOSWindows:
 		f.HostOS = HostOSWindows
-	case 1:
+	case file5HostOSUnix:
 		f.HostOS = HostOSUnix
 	default:
 		f.HostOS = HostOSUnknown
