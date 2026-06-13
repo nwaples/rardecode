@@ -168,7 +168,7 @@ func (br *bufVolumeReader) writeToN(w io.Writer, n int64) (int64, error) {
 	if todo < 0 && err == io.EOF {
 		err = nil
 	}
-	return br.off - startOffset, nil
+	return br.off - startOffset, err
 }
 
 // findSig searches for the RAR signature and version at the beginning of a file.
