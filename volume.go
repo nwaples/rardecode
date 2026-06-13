@@ -271,12 +271,13 @@ func (v *fileVolume) nextBlock() (*fileBlockHeader, error) {
 		if err == nil {
 			return h, nil
 		}
-		if err == ErrMultiVolume {
+		switch err {
+		case ErrMultiVolume:
 			err = v.openNext()
 			if err != nil {
 				return nil, err
 			}
-		} else if err == errVolumeOrArchiveEnd {
+		case errVolumeOrArchiveEnd:
 			err = v.openNext()
 			if err != nil {
 				// new volume doesnt exist, assume end of archive
@@ -285,7 +286,7 @@ func (v *fileVolume) nextBlock() (*fileBlockHeader, error) {
 				}
 				return nil, err
 			}
-		} else {
+		default:
 			return nil, err
 		}
 	}

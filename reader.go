@@ -235,13 +235,15 @@ func (f *packedFileReader) nextBlock() error {
 	}
 	h, err := f.v.nextBlock()
 	if err != nil {
-		if err == io.EOF {
+		switch err {
+		case io.EOF:
 			// archive ended, but file hasn't
 			return ErrUnexpectedArcEnd
-		} else if err == errVolumeOrArchiveEnd {
+		case errVolumeOrArchiveEnd:
 			return ErrMultiVolume
+		default:
+			return err
 		}
-		return err
 	}
 	if h.first || h.Name != f.h.Name {
 		return ErrInvalidFileBlock
