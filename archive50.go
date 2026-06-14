@@ -56,9 +56,17 @@ const (
 	file5HostOSWindows = 0
 	file5HostOSUnix    = 1
 
+	// file header extra types
+	file5ExtraCrypt    = 1
+	file5ExtraHash     = 2
+	file5ExtraTime     = 3
+	file5ExtraVersion  = 4
+	file5ExtraRedirect = 5
+	file5ExtraOwner    = 6
+
 	// file encryption record flags
-	file5EncCheckPresent = 0x0001 // password check data is present
-	file5EncUseMac       = 0x0002 // use MAC instead of plain checksum
+	file5ExtraCryptCheckPresent = 0x0001 // password check data is present
+	file5ExtraCryptUseMac       = 0x0002 // use MAC instead of plain checksum
 
 	// precision time flags
 	file5ExtraTimeIsUnixTime = 0x01 // is unix time_t
@@ -231,13 +239,13 @@ func (a *archive50) parseFileEncryptionRecord(b readBuf, f *fileBlockHeader) err
 	f.iv = slices.Clone(b.bytes(16))
 
 	var check []byte
-	if flags&file5EncCheckPresent > 0 {
+	if flags&file5ExtraCryptCheckPresent > 0 {
 		if len(b) < 12 {
 			return ErrCorruptEncryptData
 		}
 		check = slices.Clone(b.bytes(12))
 	}
-	useMac := flags&file5EncUseMac > 0
+	useMac := flags&file5ExtraCryptUseMac > 0
 	// only need to generate keys for first block or
 	// last block if it has an optional hash key
 	if a.pass == nil || !(f.first || (f.last && useMac)) {
@@ -413,20 +421,20 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 	for _, e := range h.extra {
 		var err error
 		switch e.ftype {
-		case 1: // encryption
+		case file5ExtraCrypt:
 			if encErr := a.parseFileEncryptionRecord(e.data, f); encErr != nil {
 				f.errs = append(f.errs, encErr)
 			}
-		case 2:
+		case file5ExtraHash:
 			// TODO: hash
-		case 3:
+		case file5ExtraTime:
 			err = a.parseFilePrecisionTimeRecord(&e.data, f)
-		case 4: // version
+		case file5ExtraVersion:
 			_ = e.data.uvarint() // ignore flags field
 			f.Version = int(e.data.uvarint())
-		case 5:
+		case file5ExtraRedirect:
 			// TODO: redirection
-		case 6:
+		case file5ExtraOwner:
 			// TODO: owner
 		}
 		if err != nil {
