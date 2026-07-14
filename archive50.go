@@ -352,6 +352,37 @@ func (a *archive50) parseFilePrecisionTimeRecord(b *readBuf, f *fileBlockHeader)
 	return nil
 }
 
+// RAR5 file redirection types (extra record type 5).
+// See https://www.rarlab.com/technote.htm
+const (
+	RedirUnixSymlink     = 1
+	RedirWindowsSymlink  = 2
+	RedirWindowsJunction = 3
+	RedirHardLink        = 4
+	RedirFileCopy        = 5
+)
+
+// parseFileRedirectionRecord processes the optional RAR5 file redirection
+// record (symlinks, hard links, and file copies).
+func parseFileRedirectionRecord(b *readBuf, f *fileBlockHeader) error {
+	if len(*b) == 0 {
+		return ErrCorruptFileHeader
+	}
+
+	redirType := int(b.uvarint())
+	_ = b.uvarint() // flags (e.g. directory target); unused for now
+	nlen := int(b.uvarint())
+
+	if nlen < 0 || len(*b) < nlen {
+		return ErrCorruptFileHeader
+	}
+
+	f.RedirType = redirType
+	f.Linkname = string(b.bytes(nlen))
+
+	return nil
+}
+
 func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) {
 	f := new(fileBlockHeader)
 
@@ -433,7 +464,7 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 			_ = e.data.uvarint() // ignore flags field
 			f.Version = int(e.data.uvarint())
 		case file5ExtraRedirect:
-			// TODO: redirection
+			err = parseFileRedirectionRecord(&e.data, f)
 		case file5ExtraOwner:
 			// TODO: owner
 		}

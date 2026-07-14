@@ -53,6 +53,12 @@ type FileHeader struct {
 	CreationTime     time.Time // creation time (non-zero if set)
 	AccessTime       time.Time // access time (non-zero if set)
 	Version          int       // file version
+	// Linkname is the target for RAR5 redirections (symlinks, hard links, etc).
+	// Populated from the optional file redirection extra record when present.
+	Linkname string
+	// RedirType is the RAR5 redirection type when Linkname is set.
+	// See https://www.rarlab.com/technote.htm (file redirection record).
+	RedirType int
 }
 
 // Mode returns an fs.FileMode for the file, calculated from the Attributes field.
