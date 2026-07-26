@@ -1,6 +1,7 @@
 package rardecode
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -9,6 +10,33 @@ import (
 	"strings"
 	"time"
 )
+
+var ErrFileTooLargeForReadFile = errors.New("rardecode: file too large for ReadFile")
+
+type readFileLimitReader struct {
+	r io.Reader
+	n int64
+}
+
+func (l *readFileLimitReader) Read(p []byte) (int, error) {
+	if l.n < 0 {
+		return 0, ErrFileTooLargeForReadFile
+	}
+	ln := max(1, l.n)
+	if int64(len(p)) > ln {
+		p = p[0:ln]
+	}
+	n, err := l.r.Read(p)
+	l.n -= int64(n)
+	if l.n < 0 {
+		return 0, ErrFileTooLargeForReadFile
+	}
+	return n, err
+}
+
+func newReadFileLimitReader(r io.Reader, n int64) *readFileLimitReader {
+	return &readFileLimitReader{r: r, n: n}
+}
 
 type fileInfo struct {
 	h *fileBlockHeader
@@ -179,6 +207,8 @@ func (rfs *RarFS) ReadDir(name string) ([]fs.DirEntry, error) {
 }
 
 // ReadFile reads the named file from the file system fs and returns its contents.
+// The maxixum file size that can be read is DefaultMaxReadFileSize.
+// This can be changed with the MaxReadFileSize() option.
 func (rfs *RarFS) ReadFile(name string) ([]byte, error) {
 	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{Op: "readfile", Path: name, Err: fs.ErrInvalid}
@@ -199,7 +229,14 @@ func (rfs *RarFS) ReadFile(name string) ([]byte, error) {
 
 	h := node.firstBlock()
 	if h.UnKnownSize {
-		return io.ReadAll(f)
+		r := io.Reader(f)
+		if rfs.vm.opt.maxReadFileSize > 0 {
+			r = newReadFileLimitReader(r, rfs.vm.opt.maxReadFileSize)
+		}
+		return io.ReadAll(r)
+	}
+	if rfs.vm.opt.maxReadFileSize > 0 && h.UnPackedSize > rfs.vm.opt.maxReadFileSize {
+		return nil, ErrFileTooLargeForReadFile
 	}
 	buf := make([]byte, h.UnPackedSize)
 	_, err = io.ReadFull(f, buf)
