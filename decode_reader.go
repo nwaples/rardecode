@@ -113,7 +113,13 @@ func (d *decodeReader) writeByte(c byte) {
 func (d *decodeReader) copyBytes(length, offset int) {
 	length = (d.size + length) % d.size
 	wend := min(d.w+length, d.size)
-	i := (d.size + d.w - offset) % d.size
+	i := (d.w - offset) % d.size
+	if i < 0 {
+		// offset can exceed d.size+d.w for a corrupt archive,
+		// which makes the modulo negative; wrap it back into
+		// the circular window so we never index out of range.
+		i += d.size
+	}
 	if i == d.w {
 		d.w = wend
 		return
