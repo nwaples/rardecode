@@ -23,6 +23,7 @@ var (
 
 const (
 	DefaultMaxDictionarySize = 4 << 30 // default max dictionary size of 4GB
+	DefaultMaxReadFileSize   = 4 << 30 // default max file size readable by fs.ReadFile() of 4GB
 )
 
 type osFS struct{}
@@ -32,12 +33,13 @@ func (fs osFS) Open(name string) (fs.File, error) {
 }
 
 type options struct {
-	bsize       int     // size to be use for bufio.Reader
-	maxDictSize int64   // max dictionary size
-	fs          fs.FS   // filesystem to use to open files
-	pass        *string // password for encrypted volumes
-	skipCheck   bool
-	openCheck   bool
+	bsize           int     // size to be use for bufio.Reader
+	maxDictSize     int64   // max dictionary size
+	maxReadFileSize int64   // max file size readable by ReadFile()
+	fs              fs.FS   // filesystem to use to open files
+	pass            *string // password for encrypted volumes
+	skipCheck       bool
+	openCheck       bool
 }
 
 // An Option is used for optional archive extraction settings.
@@ -54,6 +56,14 @@ func BufferSize(size int) Option {
 // Any size above 64GB will be ignored. Any size below 256kB will prevent any file from being decoded.
 func MaxDictionarySize(size int64) Option {
 	return func(o *options) { o.maxDictSize = size }
+}
+
+// MaxReadFileSize sets the maximum size of a file that can be read by RarFS.ReadFile().
+// Any attempt to read a file with a larger size will return an error.
+// The default size if not set is DefaultMaxReadFileSize.
+// Setting it to <= 0 will ignore the file size limits.
+func MaxReadFileSize(size int64) Option {
+	return func(o *options) { o.maxReadFileSize = size }
 }
 
 // FileSystem sets the fs.FS to be used for opening archive volumes.
@@ -74,8 +84,9 @@ func OpenFSCheck(o *options) { o.openCheck = true }
 
 func getOptions(opts []Option) *options {
 	opt := &options{
-		fs:          defaultFS,
-		maxDictSize: DefaultMaxDictionarySize,
+		fs:              defaultFS,
+		maxDictSize:     DefaultMaxDictionarySize,
+		maxReadFileSize: DefaultMaxReadFileSize,
 	}
 	for _, f := range opts {
 		f(opt)
