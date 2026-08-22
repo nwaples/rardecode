@@ -101,7 +101,7 @@ func (f *FileHeader) Mode() fs.FileMode {
 	}
 
 	// Check for additional file types.
-	if f.Attributes&0xF000 == 0xA000 {
+	if f.Attributes&0xF000 == 0xA000 || f.LinkType == LinkTypeWindowsSymlink || f.LinkType == LinkTypeUnixSymlink {
 		m |= fs.ModeSymlink
 	}
 	return m

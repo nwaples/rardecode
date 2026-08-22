@@ -243,6 +243,21 @@ func (rfs *RarFS) ReadFile(name string) ([]byte, error) {
 	return buf, err
 }
 
+func (rfs *RarFS) ReadLink(name string) (string, error) {
+	if !fs.ValidPath(name) {
+		return "", &fs.PathError{Op: "readlink", Path: name, Err: fs.ErrInvalid}
+	}
+	node := rfs.ftree[name]
+	if node == nil {
+		return "", &fs.PathError{Op: "readlink", Path: name, Err: fs.ErrNotExist}
+	}
+	h := node.firstBlock()
+	if h.LinkType == LinkTypeNone {
+		return "", &fs.PathError{Op: "readlink", Path: name, Err: fs.ErrInvalid}
+	}
+	return h.LinkTarget, nil
+}
+
 /*
 func (rfs *RarFS) Check(name string) error {
 	if !fs.ValidPath(name) {
