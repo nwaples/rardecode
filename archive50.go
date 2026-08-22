@@ -75,6 +75,10 @@ const (
 	file5ExtraTimeHasATime   = 0x08 // has access time
 	file5ExtraTimeHasUnixNS  = 0x10 // unix nanosecond time format
 
+	file5ExtraRedirDir = 0x1 // redirection target is a directory
+
+	maxPathSize = 0x10000
+
 	cacheSize50   = 4
 	maxPbkdf2Salt = 64
 	pwCheckSize   = 8
@@ -292,7 +296,7 @@ func readUnixNanoseconds(b *readBuf) (time.Duration, error) {
 }
 
 // parseFilePrecisionTimeRecord processes the optional high precision time record from a file header.
-func (a *archive50) parseFilePrecisionTimeRecord(b *readBuf, f *fileBlockHeader) error {
+func parseFilePrecisionTimeRecord(b *readBuf, f *fileBlockHeader) error {
 	var err error
 	flags := b.uvarint()
 	isUnixTime := flags&file5ExtraTimeIsUnixTime > 0
@@ -348,6 +352,25 @@ func (a *archive50) parseFilePrecisionTimeRecord(b *readBuf, f *fileBlockHeader)
 			}
 			f.AccessTime = f.AccessTime.Add(ns)
 		}
+	}
+	return nil
+}
+
+// parseFileRedirectionRecord processes the file redirection record from a file header.
+func parseFileRedirectionRecord(b *readBuf, f *fileBlockHeader) error {
+	if len(*b) == 0 {
+		return ErrCorruptFileHeader
+	}
+	f.LinkType = byte(b.uvarint())
+	flags := b.uvarint()
+	f.LinkTargetIsDir = flags&file5ExtraRedirDir > 0
+	nameLen := int(b.uvarint())
+	if nameLen > maxPathSize {
+		return ErrCorruptFileHeader
+	}
+	f.LinkTarget = string(b.bytes(nameLen))
+	if len(f.LinkTarget) < nameLen {
+		return ErrCorruptFileHeader
 	}
 	return nil
 }
@@ -427,12 +450,12 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 		case file5ExtraHash:
 			// TODO: hash
 		case file5ExtraTime:
-			err = a.parseFilePrecisionTimeRecord(&e.data, f)
+			err = parseFilePrecisionTimeRecord(&e.data, f)
 		case file5ExtraVersion:
 			_ = e.data.uvarint() // ignore flags field
 			f.Version = int(e.data.uvarint())
 		case file5ExtraRedirect:
-			// TODO: redirection
+			err = parseFileRedirectionRecord(&e.data, f)
 		case file5ExtraOwner:
 			// TODO: owner
 		}

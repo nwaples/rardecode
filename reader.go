@@ -22,6 +22,13 @@ const (
 	HostOSUnix    = 4
 	HostOSMacOS   = 5
 	HostOSBeOS    = 6
+
+	LinkTypeNone            = 0
+	LinkTypeUnixSymlink     = 1
+	LinkTypeWindowsSymlink  = 2
+	LinkTypeWindowsJunction = 3
+	LinkTypeHardLink        = 4
+	LinkTypeFileCopy        = 5
 )
 
 const (
@@ -53,6 +60,9 @@ type FileHeader struct {
 	CreationTime     time.Time // creation time (non-zero if set)
 	AccessTime       time.Time // access time (non-zero if set)
 	Version          int       // file version
+	LinkType         byte      // the type of redirection link for the file
+	LinkTarget       string    // target path of the LinkType
+	LinkTargetIsDir  bool      // link target is a directory
 }
 
 // Mode returns an fs.FileMode for the file, calculated from the Attributes field.
