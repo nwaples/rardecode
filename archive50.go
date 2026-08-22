@@ -387,17 +387,16 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 	method := (flags & file5CompMethod) >> 7 // compression method (0 == none)
 	if f.first && method != 0 {
 		unpackver := flags & file5CompAlgorithm
+		f.winSize = 0x20000 << ((flags & file5CompDictSize) >> 10)
 		switch unpackver {
 		case 0:
 			f.decVer = decode50Ver
-			f.winSize = 0x20000 << ((flags & file5CompDictSize) >> 10)
 		case 1:
 			if flags&file5CompV5Compat > 0 {
 				f.decVer = decode50Ver
 			} else {
 				f.decVer = decode70Ver
 			}
-			f.winSize = 0x20000 << ((flags >> 10) & 0x1F)
 			f.winSize += f.winSize / 32 * int64((flags&file5CompDictFract)>>15)
 		default:
 			return nil, ErrUnknownDecoder
