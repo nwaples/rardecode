@@ -436,12 +436,11 @@ func (vm *volumeManager) openVolumeFile(volnum int) (fs.File, error) {
 	vm.mu.Lock()
 	defer vm.mu.Unlock()
 
-	var file string
 	// check for cached volume name
 	if volnum < len(vm.files) {
 		return vm.opt.fs.Open(vm.dir + vm.files[volnum])
 	}
-	file = vm.files[len(vm.files)-1]
+	file := vm.files[len(vm.files)-1]
 	if len(vm.files) == 1 {
 		file = fixFileExtension(file)
 		if !vm.old && hasDigits(file) {

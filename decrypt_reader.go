@@ -42,9 +42,8 @@ func (cr *cipherBlockReader) ReadByte() (byte, error) {
 // If the input is not a multiple of the cipher block size,
 // the trailing bytes will be ignored.
 func (cr *cipherBlockReader) Read(p []byte) (int, error) {
-	var n int
 	if len(cr.outbuf) > 0 {
-		n = copy(p, cr.outbuf)
+		n := copy(p, cr.outbuf)
 		cr.outbuf = cr.outbuf[n:]
 		return n, nil
 	}
@@ -55,7 +54,7 @@ func (cr *cipherBlockReader) Read(p []byte) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		n = copy(p, cr.outbuf)
+		n := copy(p, cr.outbuf)
 		cr.outbuf = cr.outbuf[n:]
 		return n, nil
 	}

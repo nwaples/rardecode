@@ -395,8 +395,7 @@ func getV3Filter(code []byte) (v3Filter, error) {
 		return nil, err
 	}
 	if n > 0 {
-		var m uint32
-		m, err = r.readUint32()
+		m, err := r.readUint32()
 		if err != nil {
 			return nil, err
 		}
