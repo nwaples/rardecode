@@ -77,6 +77,11 @@ const (
 
 	file5ExtraRedirDir = 0x1 // redirection target is a directory
 
+	file5ExtraUnixOwnerHasUserName  = 0x01 // has unix user name string
+	file5ExtraUnixOwnerHasGroupName = 0x02 // has unix group name string
+	file5ExtraUnixOwnerHasUserID    = 0x04 // has unix user id
+	file5ExtraUnixOwnerHasGroupID   = 0x06 // has unix group id
+
 	maxPathSize = 0x10000
 
 	cacheSize50   = 4
@@ -375,6 +380,30 @@ func parseFileRedirectionRecord(b *readBuf, f *fileBlockHeader) error {
 	return nil
 }
 
+// parseFileOwnerRecord processes the file owner record from a file header.
+func parseFileOwnerRecord(b *readBuf, f *fileBlockHeader) error {
+	flags := b.uvarint()
+	if flags&file5ExtraUnixOwnerHasUserName > 0 {
+		nameLen := min(int(b.uvarint()), 255)
+		name := string(b.bytes(nameLen))
+		f.UnixOwnerUserName = &name
+	}
+	if flags&file5ExtraUnixOwnerHasGroupName > 0 {
+		nameLen := min(int(b.uvarint()), 255)
+		name := string(b.bytes(nameLen))
+		f.UnixOwnerGroupName = &name
+	}
+	if flags&file5ExtraUnixOwnerHasUserID > 0 {
+		id := b.uvarint()
+		f.UnixOwnerUserID = &id
+	}
+	if flags&file5ExtraUnixOwnerHasGroupID > 0 {
+		id := b.uvarint()
+		f.UnixOwnerGroupID = &id
+	}
+	return nil
+}
+
 func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) {
 	f := new(fileBlockHeader)
 
@@ -457,7 +486,7 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 		case file5ExtraRedirect:
 			err = parseFileRedirectionRecord(&e.data, f)
 		case file5ExtraOwner:
-			// TODO: owner
+			err = parseFileOwnerRecord(&e.data, f)
 		}
 		if err != nil {
 			return nil, err
