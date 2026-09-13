@@ -45,10 +45,12 @@ type decodeReader struct {
 	err    error          // current decoder error output
 	solid  bool           // archive is solid
 
-	win  []byte // sliding window buffer
-	size int    // win length
-	r    int    // index in win for reads (beginning)
-	w    int    // index in win for writes (end)
+	win       []byte // sliding window buffer
+	size      int    // win length
+	r         int    // index in win for reads (beginning)
+	w         int    // index in win for writes (end)
+	rem       int    // bytes of a match left to copy after the window wraps
+	remOffset int    // that match's offset
 }
 
 func (d *decodeReader) init(f archiveFile, ver int, size int, reset, arcSolid bool, unPackedSize int64) error {
@@ -58,6 +60,7 @@ func (d *decodeReader) init(f archiveFile, ver int, size int, reset, arcSolid bo
 	d.solid = arcSolid
 	if reset {
 		d.fl = nil
+		d.rem = 0
 	}
 	d.archiveFile = f
 
@@ -110,9 +113,18 @@ func (d *decodeReader) writeByte(c byte) {
 
 // copyBytes copies len bytes at off distance from the end
 // to the end of the window.
+//
+// A match may run past the end of the window. The bytes that do not fit
+// are held in rem and copied once the window wraps, as the window is
+// circular and the same offset still selects the right source bytes there.
 func (d *decodeReader) copyBytes(length, offset int) {
 	length = (d.size + length) % d.size
-	wend := min(d.w+length, d.size)
+	if d.w+length > d.size {
+		d.rem = d.w + length - d.size
+		d.remOffset = offset
+		length = d.size - d.w
+	}
+	wend := d.w + length
 	i := (d.w - offset) % d.size
 	if i < 0 {
 		// offset can exceed d.size+d.w for a corrupt archive,
@@ -175,6 +187,12 @@ func (d *decodeReader) fill() error {
 		// wrap to beginning of buffer
 		d.r = 0
 		d.w = 0
+		if d.rem > 0 {
+			// finish the match that ran past the end of the window
+			n := d.rem
+			d.rem = 0
+			d.copyBytes(n, d.remOffset)
+		}
 	}
 	d.err = d.dec.fill(d) // fill window using decoder
 	if d.w == d.r {
