@@ -49,6 +49,12 @@ type decodeReader struct {
 	size int    // win length
 	r    int    // index in win for reads (beginning)
 	w    int    // index in win for writes (end)
+
+	// A copy that reaches the end of the window stops there, because the
+	// window holds the output and the output has to be read before the
+	// window wraps. The rest of it is written first thing after the wrap.
+	pendLen int // bytes of that copy still to be written
+	pendOff int // its offset
 }
 
 func (d *decodeReader) init(f archiveFile, ver int, size int, reset, arcSolid bool, unPackedSize int64) error {
@@ -58,6 +64,7 @@ func (d *decodeReader) init(f archiveFile, ver int, size int, reset, arcSolid bo
 	d.solid = arcSolid
 	if reset {
 		d.fl = nil
+		d.pendLen = 0
 	}
 	d.archiveFile = f
 
@@ -113,6 +120,10 @@ func (d *decodeReader) writeByte(c byte) {
 func (d *decodeReader) copyBytes(length, offset int) {
 	length = (d.size + length) % d.size
 	wend := min(d.w+length, d.size)
+	if wend < d.w+length {
+		d.pendLen = d.w + length - wend
+		d.pendOff = offset
+	}
 	i := (d.w - offset) % d.size
 	if i < 0 {
 		// offset can exceed d.size+d.w for a corrupt archive,
@@ -168,13 +179,20 @@ func (d *decodeReader) readErr() error {
 
 // fill the decodeReader window
 func (d *decodeReader) fill() error {
-	if d.err != nil {
-		return d.readErr()
-	}
 	if d.w == d.size {
 		// wrap to beginning of buffer
 		d.r = 0
 		d.w = 0
+	}
+	if d.pendLen > 0 {
+		// finish the copy that reached the end of the window
+		n := d.pendLen
+		d.pendLen = 0
+		d.copyBytes(n, d.pendOff)
+		return nil
+	}
+	if d.err != nil {
+		return d.readErr()
 	}
 	d.err = d.dec.fill(d) // fill window using decoder
 	if d.w == d.r {
