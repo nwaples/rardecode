@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"io"
 	"slices"
@@ -67,9 +68,12 @@ type archive15 struct {
 	multi     bool // archive is multi-volume
 	solid     bool // archive is a solid archive
 	encrypted bool
-	oldNaming bool
-	pass      []uint16              // password in UTF-16
-	keyCache  [cacheSize30]struct { // cache of previously calculated decryption keys
+	// keyChecked is set once a header has been decrypted with the password
+	// and passed its CRC check.
+	keyChecked bool
+	oldNaming  bool
+	pass       []uint16              // password in UTF-16
+	keyCache   [cacheSize30]struct { // cache of previously calculated decryption keys
 		salt []byte
 		key  []byte
 		iv   []byte
@@ -458,7 +462,10 @@ func (a *archive15) nextBlock(br *bufVolumeReader) (*fileBlockHeader, error) {
 			if err == io.EOF {
 				return nil, errVolumeOrArchiveEnd
 			}
-			return nil, err
+			return nil, a.headerPasswordError(err)
+		}
+		if a.encrypted {
+			a.keyChecked = true
 		}
 		switch h.htype {
 		case blockFile:
@@ -477,6 +484,21 @@ func (a *archive15) nextBlock(br *bufVolumeReader) (*fileBlockHeader, error) {
 			}
 		}
 	}
+}
+
+// headerPasswordError reports a failure to read the first encrypted header
+// as a possible wrong password. Encrypted headers in this format carry no
+// password check value, so a wrong password turns the first header into
+// noise: it fails its CRC, or its size fields run past the end of the file.
+// The original error is kept in the chain, so errors.Is still matches it.
+func (a *archive15) headerPasswordError(err error) error {
+	if !a.encrypted || a.keyChecked {
+		return err
+	}
+	if errors.Is(err, ErrBadHeaderCRC) || errors.Is(err, ErrCorruptBlockHeader) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return fmt.Errorf("%w: %w", ErrBadPassword, err)
+	}
+	return err
 }
 
 // newArchive15 creates a new archiveBlockReader for a Version 1.5 archive
