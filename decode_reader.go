@@ -49,6 +49,8 @@ type decodeReader struct {
 	size int    // win length
 	r    int    // index in win for reads (beginning)
 	w    int    // index in win for writes (end)
+	idx  int    // index for copyBytes overflow
+	len  int    // length of copyBytes overflow
 }
 
 func (d *decodeReader) init(f archiveFile, ver int, size int, reset, arcSolid bool, unPackedSize int64) error {
@@ -56,6 +58,7 @@ func (d *decodeReader) init(f archiveFile, ver int, size int, reset, arcSolid bo
 	d.tot = 0
 	d.err = nil
 	d.solid = arcSolid
+	d.len = 0
 	if reset {
 		d.fl = nil
 	}
@@ -121,14 +124,25 @@ func (d *decodeReader) copyBytes(length, offset int) {
 		i += d.size
 	}
 	if i == d.w {
+		length -= wend - d.w
 		d.w = wend
-		return
+		i = 0
 	} else if i > d.w {
-		d.w += copy(d.win[d.w:wend], d.win[i:])
+		n := copy(d.win[d.w:wend], d.win[i:])
+		d.w += n
+		length -= n
 		i = 0
 	}
 	for d.w < wend {
-		d.w += copy(d.win[d.w:wend], d.win[i:d.w])
+		n := copy(d.win[d.w:wend], d.win[i:d.w])
+		d.w += n
+		length -= n
+		i += n
+	}
+	// save overflow for later fill()
+	if length > 0 {
+		d.len = length
+		d.idx = i
 	}
 }
 
@@ -175,6 +189,14 @@ func (d *decodeReader) fill() error {
 		// wrap to beginning of buffer
 		d.r = 0
 		d.w = 0
+		if d.len > 0 {
+			if d.idx != 0 {
+				// copy copyBytes overflow from previous fill()
+				copy(d.win, d.win[d.idx:d.idx+d.len])
+			}
+			d.w = d.len
+			d.len = 0
+		}
 	}
 	d.err = d.dec.fill(d) // fill window using decoder
 	if d.w == d.r {
