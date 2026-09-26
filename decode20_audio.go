@@ -61,7 +61,7 @@ func (d *audio20Decoder) decode(delta int) byte {
 	pch := 8*v.lastChar + v.k[0]*v.d[0] + v.k[1]*v.d[1] + v.k[2]*v.d[2] + v.k[3]*v.d[3] + v.k[4]*d.chanDelta
 	pch = (pch >> 3) & 0xFF
 	ch := pch - delta
-	delta <<= 3
+	delta = int(int8(delta)) << 3
 
 	v.dif[0] += abs(delta)
 	v.dif[1] += abs(delta - v.d[0])
@@ -75,7 +75,7 @@ func (d *audio20Decoder) decode(delta int) byte {
 	v.dif[9] += abs(delta - d.chanDelta)
 	v.dif[10] += abs(delta + d.chanDelta)
 
-	d.chanDelta = ch - v.lastChar
+	d.chanDelta = int(int8(ch - v.lastChar))
 	v.lastDelta = d.chanDelta
 	v.lastChar = ch
 
