@@ -49,7 +49,7 @@ type decodeReader struct {
 	size int    // win length
 	r    int    // index in win for reads (beginning)
 	w    int    // index in win for writes (end)
-	idx  int    // index for copyBytes overflow
+	off  int    // offset for copyBytes overflow
 	len  int    // length of copyBytes overflow
 }
 
@@ -139,11 +139,9 @@ func (d *decodeReader) copyBytes(length, offset int) {
 		length -= n
 		i += n
 	}
-	// save overflow for later fill()
-	if length > 0 {
-		d.len = length
-		d.idx = i
-	}
+	// save possible overflow for later fill()
+	d.len = length
+	d.off = offset
 }
 
 // queueFilter adds a filterBlock to the end decodeReader's filters.
@@ -190,12 +188,7 @@ func (d *decodeReader) fill() error {
 		d.r = 0
 		d.w = 0
 		if d.len > 0 {
-			if d.idx != 0 {
-				// copy copyBytes overflow from previous fill()
-				copy(d.win, d.win[d.idx:d.idx+d.len])
-			}
-			d.w = d.len
-			d.len = 0
+			d.copyBytes(d.len, d.off)
 		}
 	}
 	d.err = d.dec.fill(d) // fill window using decoder
