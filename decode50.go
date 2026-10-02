@@ -32,7 +32,8 @@ type decoder50 struct {
 	codeLength []byte
 	offsetSize int
 
-	lastBlock bool // current block is last block in compressed file
+	emptySolid bool // current file is an empty solid file
+	lastBlock  bool // current block is last block in compressed file
 
 	mainDecoder      huffmanDecoder
 	offsetDecoder    huffmanDecoder
@@ -45,8 +46,10 @@ type decoder50 struct {
 
 func (d *decoder50) version() int { return decode50Ver }
 
-func (d *decoder50) init(r byteReader, reset bool, size int64, ver int) {
-	d.br.reset(r)
+func (d *decoder50) init(f archiveFile, reset bool, size int64, ver int) {
+	fh := f.currFile()
+	d.emptySolid = fh.arcSolid && fh.PackedSize == 0
+	d.br.reset(f)
 	d.lastBlock = false
 	if ver == decode70Ver {
 		d.codeLength = d.buf[:]
@@ -300,7 +303,7 @@ func (d *decoder50) fill(dr *decodeReader) error {
 			err = d.readBlockHeader()
 		}
 		if err != nil {
-			if err == io.EOF {
+			if err == io.EOF && !d.emptySolid {
 				return ErrDecoderOutOfData
 			}
 			return err

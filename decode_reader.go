@@ -29,9 +29,9 @@ type filterBlock struct {
 
 // decoder is the interface for decoding compressed data
 type decoder interface {
-	init(r byteReader, reset bool, size int64, ver int) // initialize decoder for current file
-	fill(dr *decodeReader) error                        // fill window with decoded data
-	version() int                                       // decoder version
+	init(f archiveFile, reset bool, size int64, ver int) // initialize decoder for current file
+	fill(dr *decodeReader) error                         // fill window with decoded data
+	version() int                                        // decoder version
 }
 
 // decodeReader implements io.Reader for decoding compressed data in RAR archives.
