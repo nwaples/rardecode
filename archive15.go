@@ -3,6 +3,7 @@ package rardecode
 import (
 	"bytes"
 	"crypto/sha1"
+	"encoding/binary"
 	"errors"
 	"hash/crc32"
 	"io"
@@ -18,6 +19,8 @@ const (
 	blockArc     = 0x73
 	blockFile    = 0x74
 	blockComment = 0x75
+	blockOldSub  = 0x77 // old style subblock
+	blockAV      = 0x79 // authenticity information
 	blockService = 0x7a
 	blockEnd     = 0x7b
 
@@ -35,6 +38,7 @@ const (
 	fileSplitBefore = 0x0001
 	fileSplitAfter  = 0x0002
 	fileEncrypted   = 0x0004
+	fileComment     = 0x0008
 	fileSolid       = 0x0010
 	fileWindowMask  = 0x00e0
 	fileLargeData   = 0x0100
@@ -331,7 +335,12 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 	if method != 0 {
 		switch unpackver {
 		case 15:
-			return nil, ErrUnsupportedDecoder
+			// Reported when the file is read, so that the archive can
+			// still be listed and its other files read. A directory has
+			// nothing to decode.
+			if !f.IsDir {
+				f.errs = append(f.errs, ErrUnsupportedDecoder)
+			}
 		case 20, 26:
 			f.decVer = decode20Ver
 		case 29:
@@ -414,8 +423,16 @@ func (a *archive15) readBlockHeader(r byteReader) (*blockHeader15, error) {
 	} else {
 		_, _ = hash.Write(h.data[2:])
 	}
+	dataRead := false
 	if crc != uint16(hash.Sum32()) {
-		return nil, ErrBadHeaderCRC
+		var ok bool
+		ok, dataRead, err = a.oldBlockCRC(r, h, crc)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrBadHeaderCRC
+		}
 	}
 	h.data = h.data[7:]
 	if h.flags&blockHasData > 0 {
@@ -423,6 +440,9 @@ func (a *archive15) readBlockHeader(r byteReader) (*blockHeader15, error) {
 			return nil, ErrCorruptBlockHeader
 		}
 		h.dataSize = int64(h.data.uint32())
+		if dataRead {
+			h.dataSize = 0
+		}
 	}
 	if (h.htype == blockService || h.htype == blockFile) && h.flags&fileLargeData > 0 {
 		if len(h.data) < 25 {
@@ -432,6 +452,49 @@ func (a *archive15) readBlockHeader(r byteReader) (*blockHeader15, error) {
 		h.dataSize |= int64(b.uint32()) << 32
 	}
 	return h, nil
+}
+
+// oldBlockCRC checks crc against the part of a block that archives written
+// by RAR 1.5-2.x cover with it when that is not the whole header. It is only
+// tried after the whole header failed to match, so nothing that matched
+// before is rejected now.
+//   - A file header with an embedded comment: the header up to the end of
+//     the file name, without the comment that follows (the RAR 2.x TechNote:
+//     "CRC of fields from HEAD_TYPE to FILEATTR and file name").
+//   - An old style subblock: the header together with its data, which is
+//     read from r for the check; dataRead reports that it was.
+//   - An authenticity information block: its first 15 bytes. Nothing
+//     documents this block's layout; this is what WinRAR 2.90's own
+//     self-extracting installer contains.
+func (a *archive15) oldBlockCRC(r byteReader, h *blockHeader15, crc uint16) (ok, dataRead bool, err error) {
+	switch {
+	case h.htype == blockFile && h.flags&fileComment > 0:
+		if len(h.data) < 32 {
+			return false, false, nil
+		}
+		end := 32 + int(binary.LittleEndian.Uint16(h.data[26:28]))
+		if h.flags&fileLargeData > 0 {
+			end += 8
+		}
+		if end > len(h.data) {
+			return false, false, nil
+		}
+		return crc == uint16(crc32.ChecksumIEEE(h.data[2:end])), false, nil
+	case h.htype == blockOldSub && h.flags&blockHasData > 0 && !a.encrypted:
+		if len(h.data) < 11 {
+			return false, false, nil
+		}
+		hash := crc32.NewIEEE()
+		_, _ = hash.Write(h.data[2:])
+		_, err = io.CopyN(hash, r, int64(binary.LittleEndian.Uint32(h.data[7:11])))
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		return err == nil && crc == uint16(hash.Sum32()), true, err
+	case h.htype == blockAV && len(h.data) >= 15:
+		return crc == uint16(crc32.ChecksumIEEE(h.data[2:15])), false, nil
+	}
+	return false, false, nil
 }
 
 func (a *archive15) init(br *bufVolumeReader) (int, error) {
