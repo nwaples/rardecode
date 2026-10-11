@@ -451,7 +451,7 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 			}
 			f.winSize += f.winSize / 32 * int64((flags&file5CompDictFract)>>15)
 		default:
-			return nil, ErrUnknownDecoder
+			f.decVer = decodeUnknownVer
 		}
 	}
 	switch h.data.uvarint() {

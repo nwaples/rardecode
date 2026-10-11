@@ -7,7 +7,8 @@ import (
 )
 
 const (
-	_ = iota
+	decodeUnknownVer = iota
+	decode15Ver
 	decode20Ver
 	decode29Ver
 	decode50Ver
@@ -21,7 +22,6 @@ var (
 	ErrCorruptBlockHeader    = errors.New("rardecode: corrupt block header")
 	ErrCorruptFileHeader     = errors.New("rardecode: corrupt file header")
 	ErrBadHeaderCRC          = errors.New("rardecode: bad header crc")
-	ErrUnknownDecoder        = errors.New("rardecode: unknown decoder version")
 	ErrDecoderOutOfData      = errors.New("rardecode: decoder expected more data than is in packed file")
 	ErrArchiveEncrypted      = errors.New("rardecode: archive encrypted, password required")
 	ErrArchivedFileEncrypted = errors.New("rardecode: archived files encrypted, password required")

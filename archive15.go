@@ -3,7 +3,6 @@ package rardecode
 import (
 	"bytes"
 	"crypto/sha1"
-	"errors"
 	"hash"
 	"hash/crc32"
 	"io"
@@ -57,10 +56,6 @@ const (
 	saltSize    = 8 // size of salt for calculating AES keys
 	cacheSize30 = 4 // number of AES keys to cache
 	hashRounds  = 0x40000
-)
-
-var (
-	ErrUnsupportedDecoder = errors.New("rardecode: unsupported decoder version")
 )
 
 type blockHeader15 struct {
@@ -373,13 +368,13 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 	if method != 0 {
 		switch unpackver {
 		case 15:
-			return nil, ErrUnsupportedDecoder
+			f.decVer = decode15Ver
 		case 20, 26:
 			f.decVer = decode20Ver
 		case 29:
 			f.decVer = decode29Ver
 		default:
-			return nil, ErrUnknownDecoder
+			f.decVer = decodeUnknownVer
 		}
 	}
 	return f, nil

@@ -11,9 +11,11 @@ const (
 )
 
 var (
-	ErrTooManyFilters   = errors.New("rardecode: too many filters")
-	ErrInvalidFilter    = errors.New("rardecode: invalid filter")
-	ErrMultipleDecoders = errors.New("rardecode: multiple decoders in a single archive not supported")
+	ErrTooManyFilters     = errors.New("rardecode: too many filters")
+	ErrInvalidFilter      = errors.New("rardecode: invalid filter")
+	ErrUnsupportedDecoder = errors.New("rardecode: unsupported decoder version")
+	ErrUnknownDecoder     = errors.New("rardecode: unknown decoder version")
+	ErrMultipleDecoders   = errors.New("rardecode: multiple decoders in a single archive not supported")
 )
 
 // filter functions take a byte slice, the current output offset and
@@ -32,6 +34,17 @@ type decoder interface {
 	init(f archiveFile, reset bool, size int64, ver int) // initialize decoder for current file
 	fill(dr *decodeReader) error                         // fill window with decoded data
 	version() int                                        // decoder version
+}
+
+type invalidDecoder int
+
+func (d invalidDecoder) version() int                                        { return int(d) }
+func (d invalidDecoder) init(f archiveFile, reset bool, size int64, ver int) {}
+func (d invalidDecoder) fill(dr *decodeReader) error {
+	if d == decodeUnknownVer {
+		return ErrUnknownDecoder
+	}
+	return ErrUnsupportedDecoder
 }
 
 // decodeReader implements io.Reader for decoding compressed data in RAR archives.
@@ -86,6 +99,8 @@ func (d *decodeReader) init(f archiveFile, ver int, size int, reset, arcSolid bo
 	// initialize decoder
 	if d.dec == nil {
 		switch ver {
+		case decode15Ver:
+			d.dec = invalidDecoder(decode15Ver)
 		case decode29Ver:
 			d.dec = new(decoder29)
 		case decode50Ver, decode70Ver:
@@ -93,7 +108,7 @@ func (d *decodeReader) init(f archiveFile, ver int, size int, reset, arcSolid bo
 		case decode20Ver:
 			d.dec = new(decoder20)
 		default:
-			return ErrUnknownDecoder
+			d.dec = invalidDecoder(decodeUnknownVer)
 		}
 	} else if d.dec.version() != ver {
 		return ErrMultipleDecoders
