@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"errors"
+	"hash"
 	"hash/crc32"
 	"io"
 	"slices"
@@ -15,11 +16,17 @@ import (
 
 const (
 	// block types
-	blockArc     = 0x73
-	blockFile    = 0x74
-	blockComment = 0x75
-	blockService = 0x7a
-	blockEnd     = 0x7b
+	blockArc        = 0x73
+	blockFile       = 0x74
+	blockComment    = 0x75
+	blockAV         = 0x76
+	blockOldService = 0x77
+	blockSign       = 0x79
+	blockService    = 0x7a
+	blockEnd        = 0x7b
+
+	// old service subtypes
+	subtypeUnixOwner = 0x101
 
 	// block flags
 	blockHasData = 0x8000
@@ -35,6 +42,7 @@ const (
 	fileSplitBefore = 0x0001
 	fileSplitAfter  = 0x0002
 	fileEncrypted   = 0x0004
+	fileComment     = 0x0008
 	fileSolid       = 0x0010
 	fileWindowMask  = 0x00e0
 	fileLargeData   = 0x0100
@@ -58,8 +66,32 @@ var (
 type blockHeader15 struct {
 	htype    byte // block header type
 	flags    uint16
-	data     readBuf // header data
-	dataSize int64   // size of extra block data
+	crc      uint16
+	hash     hash.Hash32
+	data     []byte // header data
+	dataSize int64  // size of extra block data
+}
+
+func (h *blockHeader15) checkCRC() error {
+	data := readBuf(h.data)
+	switch h.htype {
+	case blockComment:
+		if len(data) < 6 {
+			return ErrCorruptBlockHeader
+		}
+		data = data[:6]
+	case blockOldService:
+		if data.uint16() == subtypeUnixOwner {
+			return nil
+		}
+	case blockAV, blockSign:
+		return nil
+	}
+	_, _ = h.hash.Write(data)
+	if h.crc != uint16(h.hash.Sum32()) {
+		return ErrBadHeaderCRC
+	}
+	return nil
 }
 
 // archive15 implements archiveBlockReader for RAR 1.5 file format archives
@@ -256,7 +288,7 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 		f.winSize = 0x10000 << ((h.flags & fileWindowMask) >> 5)
 	}
 
-	b := h.data
+	b := readBuf(h.data)
 	if len(b) < 21 {
 		return nil, ErrCorruptFileHeader
 	}
@@ -278,7 +310,8 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 		if len(b) < 8 {
 			return nil, ErrCorruptFileHeader
 		}
-		_ = b.uint32() // already read large PackedSize in readBlockHeader
+		h.dataSize |= int64(b.uint32()) << 32
+		f.PackedSize = h.dataSize
 		f.UnPackedSize |= int64(b.uint32()) << 32
 		f.UnKnownSize = f.UnPackedSize == -1
 	} else if int32(f.UnPackedSize) == -1 {
@@ -320,6 +353,15 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 		readExtTimes(f, &b)
 	}
 
+	if h.flags&fileComment > 0 {
+		processed := len(h.data) - len(b)
+		h.data = h.data[:processed]
+	}
+	err := h.checkCRC()
+	if err != nil {
+		return nil, err
+	}
+
 	if !f.first {
 		return f, nil
 	}
@@ -351,7 +393,18 @@ func (a *archive15) parseArcBlock(h *blockHeader15) error {
 	if a.encrypted && a.pass == nil {
 		return ErrArchiveEncrypted
 	}
-	return nil
+	return h.checkCRC()
+}
+
+func (a *archive15) parseBlockEnd(h *blockHeader15) error {
+	err := h.checkCRC()
+	if err != nil {
+		return err
+	}
+	if h.flags&endArcNotLast == 0 || !a.multi {
+		return io.EOF
+	}
+	return ErrMultiVolume
 }
 
 // readBlockHeader returns the next block header in the archive.
@@ -381,8 +434,10 @@ func (a *archive15) readBlockHeader(r byteReader) (*blockHeader15, error) {
 		return nil, err
 	}
 	b := readBuf(sizeBuf)
-	crc := b.uint16()
 	h := new(blockHeader15)
+	h.crc = b.uint16()
+	h.hash = crc32.NewIEEE()
+	_, _ = h.hash.Write(b)
 	h.htype = b.byte()
 	h.flags = b.uint16()
 	size := int(b.uint16())
@@ -396,41 +451,22 @@ func (a *archive15) readBlockHeader(r byteReader) (*blockHeader15, error) {
 		return nil, ErrCorruptBlockHeader
 	}
 
-	h.data = make([]byte, size)
-	copy(h.data, sizeBuf)
-	_, err = io.ReadFull(r, h.data[7:])
+	b = make([]byte, size-7)
+	_, err = io.ReadFull(r, b)
 	if err != nil {
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
 		}
 		return nil, err
 	}
-	hash := crc32.NewIEEE()
-	if h.htype == blockComment {
-		if size < 13 {
-			return nil, ErrCorruptBlockHeader
-		}
-		_, _ = hash.Write(h.data[2:13])
-	} else {
-		_, _ = hash.Write(h.data[2:])
-	}
-	if crc != uint16(hash.Sum32()) {
-		return nil, ErrBadHeaderCRC
-	}
-	h.data = h.data[7:]
 	if h.flags&blockHasData > 0 {
-		if len(h.data) < 4 {
+		if len(b) < 4 {
 			return nil, ErrCorruptBlockHeader
 		}
-		h.dataSize = int64(h.data.uint32())
+		_, _ = h.hash.Write(b[:4])
+		h.dataSize = int64(b.uint32())
 	}
-	if (h.htype == blockService || h.htype == blockFile) && h.flags&fileLargeData > 0 {
-		if len(h.data) < 25 {
-			return nil, ErrCorruptBlockHeader
-		}
-		b := h.data[21:25]
-		h.dataSize |= int64(b.uint32()) << 32
-	}
+	h.data = b
 	return h, nil
 }
 
@@ -463,17 +499,20 @@ func (a *archive15) nextBlock(br *bufVolumeReader) (*fileBlockHeader, error) {
 		switch h.htype {
 		case blockFile:
 			return a.parseFileHeader(h)
+		case blockService:
+			_, err = a.parseFileHeader(h)
 		case blockEnd:
-			if h.flags&endArcNotLast == 0 || !a.multi {
-				return nil, io.EOF
-			}
-			return nil, ErrMultiVolume
+			err = a.parseBlockEnd(h)
 		default:
-			if h.dataSize > 0 {
-				err = br.Discard(h.dataSize) // skip over block data
-				if err != nil {
-					return nil, err
-				}
+			err = h.checkCRC()
+		}
+		if err != nil {
+			return nil, err
+		}
+		if h.dataSize > 0 {
+			err = br.Discard(h.dataSize) // skip over block data
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
