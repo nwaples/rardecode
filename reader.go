@@ -383,7 +383,7 @@ func (pr *packedFileReader) newArchiveFileFrom(r archiveFile, blocks *fileBlockL
 		}
 	}
 	// check for compression
-	if h.decVer > 0 {
+	if h.decVer != decodeNone {
 		if pr.dr == nil {
 			pr.dr = new(decodeReader)
 		}

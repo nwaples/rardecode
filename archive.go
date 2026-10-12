@@ -7,7 +7,8 @@ import (
 )
 
 const (
-	decodeUnknownVer = iota
+	decodeNone = iota // default is no decoder (a stored file)
+	decodeUnknownVer
 	decode15Ver
 	decode20Ver
 	decode29Ver
