@@ -7,7 +7,8 @@ import (
 )
 
 const (
-	decodeUnknownVer = iota
+	_ = iota
+	decodeUnknownVer
 	decode15Ver
 	decode20Ver
 	decode29Ver
