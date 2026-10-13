@@ -369,13 +369,9 @@ func parseFileRedirectionRecord(b *readBuf, f *fileBlockHeader) error {
 	f.LinkType = byte(b.uvarint())
 	flags := b.uvarint()
 	f.LinkTargetIsDir = flags&file5ExtraRedirDir > 0
-	nameLen := int(b.uvarint())
-	if nameLen > maxPathSize {
-		return ErrCorruptFileHeader
-	}
-	f.LinkTarget = string(b.bytes(nameLen))
-	if len(f.LinkTarget) < nameLen {
-		return ErrCorruptFileHeader
+	nameLen := b.uvarint()
+	if nameLen > 0 && nameLen < maxPathSize {
+		f.LinkTarget = b.stringAtMost(int(nameLen))
 	}
 	return nil
 }
@@ -384,13 +380,13 @@ func parseFileRedirectionRecord(b *readBuf, f *fileBlockHeader) error {
 func parseFileOwnerRecord(b *readBuf, f *fileBlockHeader) error {
 	flags := b.uvarint()
 	if flags&file5ExtraUnixOwnerHasUserName > 0 {
-		nameLen := min(int(b.uvarint()), 255)
-		name := string(b.bytes(nameLen))
+		nameLen := min(b.uvarint(), 255)
+		name := b.stringAtMost(int(nameLen))
 		f.UnixOwnerUserName = &name
 	}
 	if flags&file5ExtraUnixOwnerHasGroupName > 0 {
-		nameLen := min(int(b.uvarint()), 255)
-		name := string(b.bytes(nameLen))
+		nameLen := min(b.uvarint(), 255)
+		name := b.stringAtMost(int(nameLen))
 		f.UnixOwnerGroupName = &name
 	}
 	if flags&file5ExtraUnixOwnerHasUserID > 0 {

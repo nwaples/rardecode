@@ -66,6 +66,10 @@ func (b *readBuf) bytes(n int) []byte {
 	return v
 }
 
+func (b *readBuf) stringAtMost(n int) string {
+	return string(b.bytes(min(n, b.len())))
+}
+
 func (b *readBuf) uvarint() uint64 {
 	n, cnt := binary.Uvarint(*b)
 	if cnt == 0 {
