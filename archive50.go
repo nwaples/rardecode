@@ -458,11 +458,11 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 	default:
 		f.HostOS = HostOSUnknown
 	}
-	nlen := int(h.data.uvarint())
-	if len(h.data) < nlen {
+	nlen := h.data.uvarint()
+	if nlen > uint64(len(h.data)) {
 		return nil, ErrCorruptFileHeader
 	}
-	f.Name = string(h.data.bytes(nlen))
+	f.Name = string(h.data.bytes(int(nlen)))
 
 	// parse optional extra records
 	for _, e := range h.extra {
@@ -583,25 +583,25 @@ func (a *archive50) readBlockHeader(r byteReader) (*blockHeader50, error) {
 	h.htype = b.uvarint()
 	h.flags = b.uvarint()
 
-	var extraSize int
+	var extraSize uint64
 	if h.flags&block5HasExtra > 0 {
-		extraSize = int(b.uvarint())
+		extraSize = b.uvarint()
 	}
 	if h.flags&block5HasData > 0 {
 		h.dataSize = int64(b.uvarint())
 	}
-	if len(b) < extraSize {
+	if uint64(len(b)) < extraSize {
 		return nil, ErrCorruptBlockHeader
 	}
-	h.data = b.bytes(len(b) - extraSize)
+	h.data = b.bytes(len(b) - int(extraSize))
 
 	// read header extra records
 	for len(b) > 0 {
-		size = int(b.uvarint())
-		if len(b) < size {
+		recSize := b.uvarint()
+		if uint64(len(b)) < recSize {
 			return nil, ErrCorruptBlockHeader
 		}
-		data := readBuf(b.bytes(size))
+		data := readBuf(b.bytes(int(recSize)))
 		ftype := data.uvarint()
 		h.extra = append(h.extra, extra{ftype, data})
 	}
