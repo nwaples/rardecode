@@ -32,8 +32,8 @@ var (
 
 type readBuf []byte
 
-func (b *readBuf) len() int {
-	return len(*b)
+func (b *readBuf) len() uint64 {
+	return uint64(len(*b))
 }
 
 func (b *readBuf) byte() byte {
@@ -60,13 +60,13 @@ func (b *readBuf) uint64() uint64 {
 	return v
 }
 
-func (b *readBuf) bytes(n int) []byte {
+func (b *readBuf) bytes(n uint64) []byte {
 	v := (*b)[:n]
 	*b = (*b)[n:]
 	return v
 }
 
-func (b *readBuf) stringAtMost(n int) string {
+func (b *readBuf) stringAtMost(n uint64) string {
 	return string(b.bytes(min(n, b.len())))
 }
 
@@ -74,7 +74,7 @@ func (b *readBuf) uvarint() uint64 {
 	n, cnt := binary.Uvarint(*b)
 	if cnt == 0 {
 		// buffer too small
-		cnt = b.len()
+		cnt = len(*b)
 	} else if cnt < 0 {
 		// value overflows 64 bits, -cnt is the number of bytes read
 		cnt = -cnt

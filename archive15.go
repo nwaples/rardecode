@@ -299,7 +299,7 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 	f.ModificationTime = parseDosTime(b.uint32())
 	unpackver := b.byte()     // decoder version
 	method := b.byte() - 0x30 // decryption method
-	namesize := int(b.uint16())
+	namesize := uint64(b.uint16())
 	f.Attributes = int64(b.uint32())
 	if h.flags&fileLargeData > 0 {
 		if len(b) < 8 {
@@ -313,7 +313,7 @@ func (a *archive15) parseFileHeader(h *blockHeader15) (*fileBlockHeader, error) 
 		f.UnKnownSize = true
 		f.UnPackedSize = -1
 	}
-	if len(b) < namesize {
+	if b.len() < namesize {
 		return nil, ErrCorruptFileHeader
 	}
 	name := b.bytes(namesize)

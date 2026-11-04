@@ -371,7 +371,7 @@ func parseFileRedirectionRecord(b *readBuf, f *fileBlockHeader) error {
 	f.LinkTargetIsDir = flags&file5ExtraRedirDir > 0
 	nameLen := b.uvarint()
 	if nameLen > 0 && nameLen < maxPathSize {
-		f.LinkTarget = b.stringAtMost(int(nameLen))
+		f.LinkTarget = b.stringAtMost(nameLen)
 	}
 	return nil
 }
@@ -381,12 +381,12 @@ func parseFileOwnerRecord(b *readBuf, f *fileBlockHeader) error {
 	flags := b.uvarint()
 	if flags&file5ExtraUnixOwnerHasUserName > 0 {
 		nameLen := min(b.uvarint(), 255)
-		name := b.stringAtMost(int(nameLen))
+		name := b.stringAtMost(nameLen)
 		f.UnixOwnerUserName = &name
 	}
 	if flags&file5ExtraUnixOwnerHasGroupName > 0 {
 		nameLen := min(b.uvarint(), 255)
-		name := b.stringAtMost(int(nameLen))
+		name := b.stringAtMost(nameLen)
 		f.UnixOwnerGroupName = &name
 	}
 	if flags&file5ExtraUnixOwnerHasUserID > 0 {
@@ -458,8 +458,8 @@ func (a *archive50) parseFileHeader(h *blockHeader50) (*fileBlockHeader, error) 
 	default:
 		f.HostOS = HostOSUnknown
 	}
-	nlen := int(h.data.uvarint())
-	if len(h.data) < nlen {
+	nlen := h.data.uvarint()
+	if h.data.len() < nlen {
 		return nil, ErrCorruptFileHeader
 	}
 	f.Name = string(h.data.bytes(nlen))
@@ -558,8 +558,8 @@ func (a *archive50) readBlockHeader(r byteReader) (*blockHeader50, error) {
 	crc := b.uint32()
 
 	// Check if header size is valid
-	size := int(b.uvarint())
-	bufSize := 3 + size - len(b)
+	size := b.uvarint()
+	bufSize := 3 + size - b.len()
 	if bufSize < 4 || size > maxHeaderSize {
 		return nil, ErrBadBlockHeader
 	}
@@ -583,22 +583,22 @@ func (a *archive50) readBlockHeader(r byteReader) (*blockHeader50, error) {
 	h.htype = b.uvarint()
 	h.flags = b.uvarint()
 
-	var extraSize int
+	var extraSize uint64
 	if h.flags&block5HasExtra > 0 {
-		extraSize = int(b.uvarint())
+		extraSize = b.uvarint()
 	}
 	if h.flags&block5HasData > 0 {
 		h.dataSize = int64(b.uvarint())
 	}
-	if len(b) < extraSize {
+	if b.len() < extraSize {
 		return nil, ErrCorruptBlockHeader
 	}
-	h.data = b.bytes(len(b) - extraSize)
+	h.data = b.bytes(b.len() - extraSize)
 
 	// read header extra records
 	for len(b) > 0 {
-		size = int(b.uvarint())
-		if len(b) < size {
+		size = b.uvarint()
+		if b.len() < size {
 			return nil, ErrCorruptBlockHeader
 		}
 		data := readBuf(b.bytes(size))
