@@ -64,6 +64,7 @@ type decodeReader struct {
 	w    int    // index in win for writes (end)
 	off  int    // offset for copyBytes overflow
 	len  int    // length of copyBytes overflow
+	pend int    // bytes of the filter block being collected by bufBytes, already taken from win
 }
 
 func (d *decodeReader) init(f archiveFile, ver int, size int, reset, arcSolid bool, unPackedSize int64) error {
@@ -164,8 +165,10 @@ func (d *decodeReader) queueFilter(f *filterBlock) error {
 	if len(d.fl) >= maxQueuedFilters {
 		return ErrTooManyFilters
 	}
-	// make offset relative to read index (from write index)
-	f.offset += d.w - d.r
+	// make offset relative to read index (from write index).
+	// While bufBytes collects a filter block, the list is still relative to
+	// the start of that block, so count the bytes it already took out.
+	f.offset += d.w - d.r + d.pend
 	// make offset relative to previous filter in list
 	for _, fb := range d.fl {
 		if f.offset < fb.offset {
@@ -227,7 +230,10 @@ func (d *decodeReader) bufBytes(n int) ([]byte, error) {
 		if ns == n {
 			break
 		}
-		if err := d.fill(); err != nil {
+		d.pend = ns
+		err := d.fill()
+		d.pend = 0
+		if err != nil {
 			return nil, err
 		}
 	}
